@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR básico – Paso 1</title>
+  <title>OCR DNI - Paso 2</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
@@ -19,17 +19,15 @@
     button.primary { background: #111; color: #fff; border: none; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
     .preview { width: 100%; max-height: 320px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
-    progress { width: 100%; height: 14px; }
-    textarea { width: 100%; min-height: 160px; resize: vertical; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
-    .panel { background:#fafbfc; border:1px solid #e6eaed; border-radius:10px; padding:.6rem; }
+    textarea { width: 100%; min-height: 200px; resize: vertical; }
+    pre { background: #f7f7f7; border-radius: 8px; padding: .7rem; overflow-x: auto; }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>OCR básico (foto o archivo) — Paso 1</h1>
+    <h1>OCR DNI (anverso) – Lectura básica</h1>
 
-    <!-- Entrada: foto o archivo (dos botones) -->
+    <!-- Entrada -->
     <div class="row">
       <button id="fotoBtn" type="button" class="primary">📸 Hacer foto</button>
       <input id="fotoInput" type="file" accept="image/*" capture="environment" hidden>
@@ -38,44 +36,23 @@
       <input id="archivoInput" type="file" accept="image/*" hidden>
     </div>
 
-    <!-- Idioma + acciones -->
+    <!-- Idioma -->
     <div class="row">
-      <label for="lang">Idioma</label>
+      <label for="lang">Idioma del texto</label>
       <select id="lang">
         <option value="spa" selected>Español</option>
         <option value="eng">Inglés</option>
       </select>
-
       <button id="run" class="primary" type="button">Leer texto</button>
       <button id="clear" type="button">Limpiar</button>
     </div>
 
-    <!-- Estado -->
-    <div class="row">
-      <progress id="progress" max="1" value="0"></progress>
-      <span id="status">Listo.</span>
-    </div>
-
-    <!-- Vista previa -->
     <img id="preview" class="preview" alt="Vista previa" />
 
-    <!-- Salidas -->
     <div class="row" style="flex-direction:column; align-items:stretch;">
-      <label for="output">Texto crudo detectado</label>
-      <textarea id="output" class="mono" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
+      <label for="output">Texto detectado</label>
+      <textarea id="output" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
     </div>
-
-    <div class="row" style="flex-direction:column; align-items:stretch;">
-      <div class="row" style="justify-content:space-between; padding:0;">
-        <label>Estructura OCR (líneas con coordenadas)</label>
-        <button id="toggleStruct" type="button">Mostrar/Ocultar</button>
-      </div>
-      <div id="structure" class="panel mono" style="display:none;"></div>
-    </div>
-
-    <footer style="margin-top:.75rem; color:#667">
-      Paso 1: comprobar que Tesseract ve bien la imagen (texto crudo y líneas). Sin reglas ni interpretación aún.
-    </footer>
   </div>
 
   <!-- Tesseract.js -->
@@ -85,102 +62,148 @@
     const fotoBtn = $('fotoBtn'), fotoInput = $('fotoInput');
     const archivoBtn = $('archivoBtn'), archivoInput = $('archivoInput');
     const runBtn = $('run'), clearBtn = $('clear');
-    const preview = $('preview'), progress = $('progress'), status = $('status');
-    const output = $('output'), langSel = $('lang');
-    const toggleStructBtn = $('toggleStruct'), structure = $('structure');
-
+    const preview = $('preview'), output = $('output'), langSel = $('lang');
     let currentBlob = null;
-    let lastData = null; // guardamos el último resultado de Tesseract
 
-    // Entradas
     fotoBtn.addEventListener('click', () => fotoInput.click());
-    fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0], 'Foto cargada.'));
-
     archivoBtn.addEventListener('click', () => archivoInput.click());
+
+    fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0], 'Foto cargada.'));
     archivoInput.addEventListener('change', () => onPick(archivoInput.files?.[0], 'Archivo cargado.'));
 
     function onPick(file, msg){
       if (!file) return;
       currentBlob = file;
       preview.src = URL.createObjectURL(file);
-      status.textContent = msg;
-      output.value = '';
-      structure.style.display = 'none';
-      structure.textContent = '';
+      output.value = msg + "\n";
     }
 
     clearBtn.addEventListener('click', () => {
-      currentBlob = null; lastData = null;
-      fotoInput.value=''; archivoInput.value='';
+      currentBlob = null;
+      fotoInput.value = '';
+      archivoInput.value = '';
       preview.removeAttribute('src');
-      output.value=''; structure.textContent=''; structure.style.display='none';
-      progress.value = 0; status.textContent = 'Listo.';
+      output.value = '';
     });
 
-    toggleStructBtn.addEventListener('click', () => {
-      if (!lastData) { status.textContent = 'Aún no hay OCR. Pulsa “Leer texto”.'; return; }
-      structure.style.display = structure.style.display === 'none' ? '' : 'none';
-    });
-
-    // Leer texto (sin interpretar)
     runBtn.addEventListener('click', async () => {
-      if (!currentBlob) return status.textContent = 'Selecciona o haz una foto primero.';
+      if (!currentBlob) return alert('Selecciona o haz una foto primero.');
       const lang = langSel.value || 'spa';
-      output.value = ''; progress.value = 0; status.textContent = 'Reconociendo…';
+      output.value = 'Reconociendo texto…';
 
       try {
         const worker = await Tesseract.createWorker(lang, 1, {
-          logger: m => {
-            if (m.status === 'recognizing text' && m.progress != null) {
-              progress.value = m.progress;
-              status.textContent = `Reconociendo… ${Math.round(m.progress * 100)}%`;
-            }
-          },
           workerPath: 'https://unpkg.com/tesseract.js@5.1.0/dist/worker.min.js',
-          corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
+          corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js'
         });
 
         await worker.setParameters({ tessedit_pageseg_mode: 6 });
-
         const { data } = await worker.recognize(currentBlob);
-        lastData = data; // guardamos para la vista de estructura
-        output.value = (data.text || '').trim();
-        renderStructure(data);
-        status.textContent = 'Completado ✔'; progress.value = 1;
+        const texto = data.text.trim();
+        const parsed = parseDNI(texto);
 
+        output.value = texto + '\n\n--- Campos (DNI anverso) ---\n' + JSON.stringify(parsed, null, 2);
         await worker.terminate();
       } catch (err) {
-        console.error(err);
-        status.textContent = 'Error: ' + err.message;
+        output.value = 'Error: ' + err.message;
       }
     });
 
-    // Mostrar líneas con coordenadas (y simple)
-    function renderStructure(data){
-      if (!data || !data.words) { structure.textContent = '(sin palabras)'; return; }
+    // ====== Parser simple desde texto crudo ======
+    function norm(s){
+      return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
+               .replace(/[^\p{L}\p{N}\n\s:/.-]/gu,' ')
+               .replace(/\s+/g,' ')
+               .trim().toUpperCase();
+    }
+    function splitLines(raw){
+      return (raw||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    }
 
-      // agrupamos por línea usando y0 aproximado
-      const tolY = 8;
-      const words = data.words
-        .filter(w => (w.text || '').trim())
-        .map(w => ({ t: w.text, x0: w.bbox?.x0 ?? 0, x1: w.bbox?.x1 ?? 0, y: w.bbox?.y0 ?? 0 }));
+    function parseDNI(raw){
+      const out = {
+        "Nombre": "",
+        "APELLIDOS": "",
+        "TIPO DOCUMENTO": "DNI",
+        "NºDOCUMENTO": "",
+        "SEXO": "",
+        "NACIONALIDAD": "",
+        "Nombre de los Padres": "",
+        "FECHA DE NACIMIENTO": "",
+        "LUGAR DE NACIMIENTO": "",
+        "DOMICILIO": ""
+      };
 
-      words.sort((a,b) => a.y - b.y || a.x0 - b.x0);
+      const rawLines = splitLines(raw);
+      const lines = splitLines(norm(raw));
 
-      const rows = [];
-      for (const w of words) {
-        const r = rows.find(rr => Math.abs(rr.y - w.y) <= tolY);
-        if (r) { r.items.push(w); r.y = (r.y + w.y) / 2; }
-        else { rows.push({ y: w.y, items: [w] }); }
+      const nextLine = (L,i)=> L.slice(i+1).find(x=>x && x.length>0) || "";
+      const nextTwo  = (L,i)=> L.slice(i+1).filter(x=>x && x.length>0).slice(0,2);
+
+      // APELLIDOS
+      {
+        const idx = lines.findIndex(l => /\bAPELLIDOS\b/.test(l));
+        if (idx >= 0) {
+          const [l1,l2] = nextTwo(lines, idx);
+          const ap = [l1,l2].filter(Boolean).join(' ').replace(/[^A-Z '\-]/g,' ').replace(/\s+/g,' ').trim();
+          if (ap) out["APELLIDOS"] = ap;
+        }
       }
-      for (const r of rows) r.items.sort((a,b)=>a.x0-b.x0);
 
-      const lines = rows
-        .sort((a,b)=>a.y-b.y)
-        .map((r,i) => `${String(i+1).padStart(2,'0')} | y≈${Math.round(r.y)} | ` +
-                      r.items.map(it=>it.t).join(' '));
+      // NOMBRE
+      {
+        const idx = lines.findIndex(l => /\bNOMBRE\b/.test(l));
+        if (idx >= 0) {
+          const l = nextLine(rawLines, idx) || nextLine(lines, idx);
+          const nom = (l||'').replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ '\-]/g,' ').replace(/\s+/g,' ').trim();
+          if (nom) out["Nombre"] = nom;
+        }
+      }
 
-      structure.textContent = lines.join('\n');
+      // SEXO
+      {
+        const idx = lines.findIndex(l => /\bSEXO\b/.test(l));
+        let sex = '';
+        if (idx >= 0) {
+          const l = nextLine(lines, idx);
+          sex = (l.match(/\b[MF]\b/)||[])[0] || '';
+        }
+        if (!sex) sex = (norm(raw).match(/\b[MF]\b/)||[])[0] || '';
+        if (sex) out["SEXO"] = sex;
+      }
+
+      // NACIONALIDAD
+      {
+        const idx = lines.findIndex(l => /\bNACIONALIDAD\b/.test(l));
+        let val = '';
+        if (idx >= 0) {
+          const l = nextLine(lines, idx);
+          val = (l.match(/\b[A-Z]{2,4}\b/)||[])[0] || '';
+        }
+        if (!val) {
+          val = /\bESP\b/.test(norm(raw)) ? 'ESP' : (norm(raw).match(/\b[A-Z]{2,4}\b/)||[])[0] || '';
+          if (val === 'DNI') val = '';
+        }
+        if (val) out["NACIONALIDAD"] = val;
+      }
+
+      // FECHA NACIMIENTO
+      {
+        const m = raw.match(/\b(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})\b/);
+        if (m) {
+          const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
+          const yy = m[3].length===2 ? ('19'+m[3]) : m[3];
+          out["FECHA DE NACIMIENTO"] = `${dd}/${mm}/${yy}`;
+        }
+      }
+
+      // Nº DOCUMENTO
+      {
+        const m = norm(raw).match(/\b\d{8}[ -]?[A-Z]\b/);
+        if (m) out["NºDOCUMENTO"] = m[0].replace(/[ -]/g,'');
+      }
+
+      return out;
     }
   </script>
 </body>

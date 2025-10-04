@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR básico – Foto o archivo</title>
+  <title>OCR básico – Paso 1</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; padding: 1rem; background: #f6f7f9; color: #111; }
-    .app { max-width: 700px; margin: 0 auto; background: #fff; border-radius: 12px;
+    .app { max-width: 760px; margin: 0 auto; background: #fff; border-radius: 12px;
            padding: 1rem; box-shadow: 0 6px 30px rgba(0,0,0,.06); }
     h1 { font-size: 1.25rem; margin-bottom: 1rem; }
     .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .75rem; }
@@ -18,16 +18,18 @@
     }
     button.primary { background: #111; color: #fff; border: none; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
-    .preview { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
+    .preview { width: 100%; max-height: 320px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
     progress { width: 100%; height: 14px; }
-    textarea { width: 100%; min-height: 200px; resize: vertical; }
-    footer { margin-top: 1rem; color: #667; font-size: .9rem; }
+    textarea { width: 100%; min-height: 160px; resize: vertical; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
+    .panel { background:#fafbfc; border:1px solid #e6eaed; border-radius:10px; padding:.6rem; }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>OCR básico (foto o archivo)</h1>
+    <h1>OCR básico (foto o archivo) — Paso 1</h1>
 
+    <!-- Entrada: foto o archivo (dos botones) -->
     <div class="row">
       <button id="fotoBtn" type="button" class="primary">📸 Hacer foto</button>
       <input id="fotoInput" type="file" accept="image/*" capture="environment" hidden>
@@ -36,33 +38,43 @@
       <input id="archivoInput" type="file" accept="image/*" hidden>
     </div>
 
+    <!-- Idioma + acciones -->
     <div class="row">
-      <label for="lang">Idioma del texto</label>
+      <label for="lang">Idioma</label>
       <select id="lang">
         <option value="spa" selected>Español</option>
         <option value="eng">Inglés</option>
       </select>
-    </div>
 
-    <div class="row">
       <button id="run" class="primary" type="button">Leer texto</button>
       <button id="clear" type="button">Limpiar</button>
     </div>
 
+    <!-- Estado -->
     <div class="row">
       <progress id="progress" max="1" value="0"></progress>
       <span id="status">Listo.</span>
     </div>
 
+    <!-- Vista previa -->
     <img id="preview" class="preview" alt="Vista previa" />
 
-    <div class="row">
-      <label for="output">Texto detectado</label>
-      <textarea id="output" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
+    <!-- Salidas -->
+    <div class="row" style="flex-direction:column; align-items:stretch;">
+      <label for="output">Texto crudo detectado</label>
+      <textarea id="output" class="mono" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
     </div>
 
-    <footer>
-      Puedes usar la cámara o elegir una imagen del dispositivo.
+    <div class="row" style="flex-direction:column; align-items:stretch;">
+      <div class="row" style="justify-content:space-between; padding:0;">
+        <label>Estructura OCR (líneas con coordenadas)</label>
+        <button id="toggleStruct" type="button">Mostrar/Ocultar</button>
+      </div>
+      <div id="structure" class="panel mono" style="display:none;"></div>
+    </div>
+
+    <footer style="margin-top:.75rem; color:#667">
+      Paso 1: comprobar que Tesseract ve bien la imagen (texto crudo y líneas). Sin reglas ni interpretación aún.
     </footer>
   </div>
 
@@ -70,58 +82,51 @@
   <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
   <script>
     const $ = id => document.getElementById(id);
-    const fotoBtn = $('fotoBtn');
-    const fotoInput = $('fotoInput');
-    const archivoBtn = $('archivoBtn');
-    const archivoInput = $('archivoInput');
-    const runBtn = $('run');
-    const clearBtn = $('clear');
-    const preview = $('preview');
-    const progress = $('progress');
-    const status = $('status');
-    const output = $('output');
-    const langSel = $('lang');
+    const fotoBtn = $('fotoBtn'), fotoInput = $('fotoInput');
+    const archivoBtn = $('archivoBtn'), archivoInput = $('archivoInput');
+    const runBtn = $('run'), clearBtn = $('clear');
+    const preview = $('preview'), progress = $('progress'), status = $('status');
+    const output = $('output'), langSel = $('lang');
+    const toggleStructBtn = $('toggleStruct'), structure = $('structure');
 
     let currentBlob = null;
+    let lastData = null; // guardamos el último resultado de Tesseract
 
-    // --- seleccionar foto (cámara) ---
+    // Entradas
     fotoBtn.addEventListener('click', () => fotoInput.click());
-    fotoInput.addEventListener('change', () => {
-      const f = fotoInput.files?.[0];
-      if (!f) return;
-      currentBlob = f;
-      preview.src = URL.createObjectURL(f);
-      status.textContent = 'Foto cargada.';
-    });
+    fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0], 'Foto cargada.'));
 
-    // --- seleccionar archivo (galería o explorador) ---
     archivoBtn.addEventListener('click', () => archivoInput.click());
-    archivoInput.addEventListener('change', () => {
-      const f = archivoInput.files?.[0];
-      if (!f) return;
-      currentBlob = f;
-      preview.src = URL.createObjectURL(f);
-      status.textContent = 'Archivo cargado.';
-    });
+    archivoInput.addEventListener('change', () => onPick(archivoInput.files?.[0], 'Archivo cargado.'));
 
-    // --- limpiar ---
-    clearBtn.addEventListener('click', () => {
-      currentBlob = null;
-      fotoInput.value = '';
-      archivoInput.value = '';
-      preview.removeAttribute('src');
+    function onPick(file, msg){
+      if (!file) return;
+      currentBlob = file;
+      preview.src = URL.createObjectURL(file);
+      status.textContent = msg;
       output.value = '';
-      progress.value = 0;
-      status.textContent = 'Listo.';
+      structure.style.display = 'none';
+      structure.textContent = '';
+    }
+
+    clearBtn.addEventListener('click', () => {
+      currentBlob = null; lastData = null;
+      fotoInput.value=''; archivoInput.value='';
+      preview.removeAttribute('src');
+      output.value=''; structure.textContent=''; structure.style.display='none';
+      progress.value = 0; status.textContent = 'Listo.';
     });
 
-    // --- leer texto ---
+    toggleStructBtn.addEventListener('click', () => {
+      if (!lastData) { status.textContent = 'Aún no hay OCR. Pulsa “Leer texto”.'; return; }
+      structure.style.display = structure.style.display === 'none' ? '' : 'none';
+    });
+
+    // Leer texto (sin interpretar)
     runBtn.addEventListener('click', async () => {
       if (!currentBlob) return status.textContent = 'Selecciona o haz una foto primero.';
       const lang = langSel.value || 'spa';
-      output.value = '';
-      progress.value = 0;
-      status.textContent = 'Reconociendo texto…';
+      output.value = ''; progress.value = 0; status.textContent = 'Reconociendo…';
 
       try {
         const worker = await Tesseract.createWorker(lang, 1, {
@@ -138,9 +143,10 @@
         await worker.setParameters({ tessedit_pageseg_mode: 6 });
 
         const { data } = await worker.recognize(currentBlob);
-        output.value = data.text.trim();
-        status.textContent = 'Completado ✔';
-        progress.value = 1;
+        lastData = data; // guardamos para la vista de estructura
+        output.value = (data.text || '').trim();
+        renderStructure(data);
+        status.textContent = 'Completado ✔'; progress.value = 1;
 
         await worker.terminate();
       } catch (err) {
@@ -148,8 +154,34 @@
         status.textContent = 'Error: ' + err.message;
       }
     });
+
+    // Mostrar líneas con coordenadas (y simple)
+    function renderStructure(data){
+      if (!data || !data.words) { structure.textContent = '(sin palabras)'; return; }
+
+      // agrupamos por línea usando y0 aproximado
+      const tolY = 8;
+      const words = data.words
+        .filter(w => (w.text || '').trim())
+        .map(w => ({ t: w.text, x0: w.bbox?.x0 ?? 0, x1: w.bbox?.x1 ?? 0, y: w.bbox?.y0 ?? 0 }));
+
+      words.sort((a,b) => a.y - b.y || a.x0 - b.x0);
+
+      const rows = [];
+      for (const w of words) {
+        const r = rows.find(rr => Math.abs(rr.y - w.y) <= tolY);
+        if (r) { r.items.push(w); r.y = (r.y + w.y) / 2; }
+        else { rows.push({ y: w.y, items: [w] }); }
+      }
+      for (const r of rows) r.items.sort((a,b)=>a.x0-b.x0);
+
+      const lines = rows
+        .sort((a,b)=>a.y-b.y)
+        .map((r,i) => `${String(i+1).padStart(2,'0')} | y≈${Math.round(r.y)} | ` +
+                      r.items.map(it=>it.t).join(' '));
+
+      structure.textContent = lines.join('\n');
+    }
   </script>
 </body>
 </html>
-
-

@@ -8,6 +8,8 @@ export class SmartCamera {
     this.focusTimer = null;
     this.goodCount = 0;
     this.onReadyToCapture = null;
+    this.track = null;
+    this.torchEnabled = false;
   }
 
   async start() {
@@ -22,7 +24,7 @@ export class SmartCamera {
       this.video.srcObject = this.stream;
       this.active = true;
       this.msg.textContent = "Cámara iniciada";
-      this.tryEnableTorch(); // 🔦 intenta activar linterna
+      this.track = this.stream.getVideoTracks()[0];
       this.monitor();
     } catch (e) {
       console.error(e);
@@ -30,18 +32,21 @@ export class SmartCamera {
     }
   }
 
-  async tryEnableTorch() {
+  async toggleTorch() {
+    if (!this.track) return;
     try {
-      const track = this.stream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities();
-      if (capabilities.torch) {
-        await track.applyConstraints({ advanced: [{ torch: true }] });
-        this.msg.textContent = "💡 Linterna activada al mínimo";
-      } else {
-        console.log("Torch no disponible en esta cámara.");
+      const caps = this.track.getCapabilities();
+      if (!caps.torch) {
+        this.msg.textContent = "💡 Linterna no disponible";
+        return;
       }
+      this.torchEnabled = !this.torchEnabled;
+      await this.track.applyConstraints({ advanced: [{ torch: this.torchEnabled }] });
+      this.msg.textContent = this.torchEnabled
+        ? "💡 Linterna encendida"
+        : "💡 Linterna apagada";
     } catch (err) {
-      console.warn("No se pudo activar linterna:", err);
+      console.warn("No se pudo cambiar la linterna:", err);
     }
   }
 
@@ -66,31 +71,37 @@ export class SmartCamera {
       const score = this.focusScore();
       const brightness = this.brightnessScore();
 
-      // 🔧 Umbrales más permisivos
+      // ⚙️ Modo permisivo: enfoque y luz flexibles
       let state = 'bad';
-      if (score > 45 && brightness > 30 && brightness < 230) state = 'good';
-      else if (score > 25 && brightness > 20 && brightness < 240) state = 'mid';
+      if (score > 25 && brightness > 25 && brightness < 250) state = 'good';
+      else if (score > 15 && brightness > 20 && brightness < 255) state = 'mid';
       else state = 'bad';
 
       this.container.className = state;
 
       if (state === 'good') {
-        this.msg.textContent = '✅ Enfocado y luz correcta';
+        this.msg.textContent = '✅ Listo para capturar';
         this.goodCount++;
       } else if (state === 'mid') {
-        this.msg.textContent = '🟡 Ajusta enfoque o ángulo';
+        this.msg.textContent = '🟡 Casi listo, ajusta un poco';
         this.goodCount = 0;
       } else {
-        this.msg.textContent = '🔴 Borroso o con reflejos';
+        this.msg.textContent = '🔴 Demasiado borroso o con reflejos';
         this.goodCount = 0;
       }
 
-      // 🔁 Auto-disparo tras 0.6 s (≈2 ciclos)
+      // 🔁 Auto-disparo tras 0.6 s estable (2 ciclos)
       if (this.goodCount >= 2) {
         this.goodCount = 0;
         this.capture();
       }
     }, 300);
+  }
+
+  manualCapture() {
+    if (!this.active) return;
+    this.msg.textContent = '📸 Captura manual solicitada';
+    this.capture();
   }
 
   capture() {
@@ -103,7 +114,7 @@ export class SmartCamera {
     c.toBlob(b => {
       if (this.onReadyToCapture) this.onReadyToCapture(b);
     }, 'image/jpeg', 0.9);
-    this.msg.textContent = '📸 Imagen capturada automáticamente';
+    this.msg.textContent = '📸 Imagen capturada';
   }
 
   // ---- Detección de enfoque ----
@@ -128,10 +139,10 @@ export class SmartCamera {
     for (const g of gray) variance += (g - mean) ** 2;
     variance /= gray.length;
 
-    return variance / 100; // valor normalizado
+    return variance / 100; // normalizado
   }
 
-  // ---- Detección de brillo global ----
+  // ---- Detección de brillo ----
   brightnessScore() {
     const c = document.createElement('canvas');
     c.width = 64;
@@ -140,9 +151,8 @@ export class SmartCamera {
     ctx.drawImage(this.video, 0, 0, c.width, c.height);
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     let sum = 0, n = d.length / 4;
-    for (let i = 0; i < d.length; i += 4) {
+    for (let i = 0; i < d.length; i += 4)
       sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    }
     return sum / n; // rango 0–255
   }
 
@@ -166,29 +176,6 @@ export class SmartCamera {
       const v = ((gray[j] - min) * 255) / range;
       const k = j * 4;
       d[k] = d[k + 1] = d[k + 2] = v;
-    }
-
-    // Suavizado leve para reflejos
-    const kernel = [
-      [1, 2, 1],
-      [2, 4, 2],
-      [1, 2, 1]
-    ];
-    const divisor = 16;
-    const src = new Uint8ClampedArray(d);
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        let sum = 0;
-        for (let ky = -1; ky <= 1; ky++) {
-          for (let kx = -1; kx <= 1; kx++) {
-            const idx = ((y + ky) * w + (x + kx)) * 4;
-            sum += src[idx] * kernel[ky + 1][kx + 1];
-          }
-        }
-        const k = (y * w + x) * 4;
-        const val = sum / divisor;
-        d[k] = d[k + 1] = d[k + 2] = val;
-      }
     }
 
     ctx.putImageData(img, 0, 0);

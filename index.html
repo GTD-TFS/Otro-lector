@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Extraer texto de imagen (OCR con Tesseract.js)</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 1rem; background: #f6f7f9; color: #111; }
+    .app { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 1rem; box-shadow: 0 6px 30px rgba(0,0,0,.06); }
+    header { display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; margin: 0; }
+    .controls { display: grid; gap: .75rem; grid-template-columns: 1fr; }
+    .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+    label { font-weight: 600; }
+    input[type="file"], input[type="url"], select, button, textarea {
+      padding: .6rem .7rem; border: 1px solid #dfe3e6; border-radius: 10px; background: #fff; font-size: 1rem;
+    }
+    button { cursor: pointer; }
+    button.primary { background: #111; color: #fff; border: none; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .dropzone {
+      border: 2px dashed #c7ccd1; border-radius: 12px; padding: 1rem; text-align: center; color: #555; background: #fafbfc;
+    }
+    .dropzone.drag { background: #eef6ff; border-color: #77aaff; }
+    .preview-wrap { display: grid; grid-template-columns: 1fr; gap: .75rem; margin-top: 1rem; }
+    .preview { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
+    progress { width: 100%; height: 14px; }
+    .out { display: grid; gap: .5rem; margin-top: 1rem; }
+    textarea { width: 100%; min-height: 180px; resize: vertical; }
+    small.hint { color: #666; }
+    footer { margin-top: 1rem; color: #667; font-size: .9rem; }
+    @media (min-width: 840px) {
+      .controls { grid-template-columns: 1fr 1fr; align-items: start; }
+      .preview-wrap { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="OCR en el navegador con Tesseract.js">
+    <header>
+      <h1>Extraer texto de imagen (OCR)</h1>
+    </header>
+
+    <div class="controls" id="controls">
+      <div>
+        <div class="row" aria-live="polite">
+          <label for="lang">Idioma del texto</label>
+          <select id="lang" title="Selecciona idioma">
+            <option value="spa" selected>Español (spa)</option>
+            <option value="eng">Inglés (eng)</option>
+            <option value="por">Portugués (por)</option>
+            <option value="fra">Francés (fra)</option>
+            <option value="deu">Alemán (deu)</option>
+            <option value="ita">Italiano (ita)</option>
+            <option value="cat">Catalán (cat)</option>
+          </select>
+        </div>
+
+        <div class="row">
+          <label for="file">Imagen</label>
+          <input id="file" type="file" accept="image/*" capture="environment" />
+          <button id="pasteBtn" type="button">Pegar desde portapapeles</button>
+        </div>
+
+        <div class="row">
+          <label for="url">o URL de imagen</label>
+          <input id="url" type="url" placeholder="https://..." />
+          <button id="loadUrl" type="button">Cargar</button>
+        </div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" aria-label="Arrastra y suelta una imagen aquí">
+          Arrastra y suelta una imagen aquí (o haz clic para seleccionar)
+        </div>
+
+        <div class="row">
+          <button id="run" class="primary" type="button">Reconocer texto</button>
+          <button id="clear" type="button">Limpiar</button>
+        </div>
+
+        <div class="row">
+          <label for="psm">Modo de segmentación (PSM)</label>
+          <select id="psm" title="Tesseract Page Segmentation Mode">
+            <option value="3" selected>3 – Automático (página completa)</option>
+            <option value="6">6 – Bloques uniformes de texto</option>
+            <option value="7">7 – Una sola línea</option>
+            <option value="8">8 – Una sola palabra</option>
+            <option value="13">13 – Línea raw, sin OSD</option>
+          </select>
+          <small class="hint">Útil si el resultado no es preciso.</small>
+        </div>
+      </div>
+
+      <div>
+        <div class="preview-wrap">
+          <img id="preview" class="preview" alt="Vista previa de la imagen" />
+          <div>
+            <label for="progress">Progreso</label>
+            <progress id="progress" max="1" value="0" aria-live="polite"></progress>
+            <div id="status" class="small hint">Listo.</div>
+          </div>
+        </div>
+        <div class="out">
+          <label for="output">Texto extraído</label>
+          <textarea id="output" placeholder="Aquí aparecerá el texto…"></textarea>
+          <button id="copy" type="button">Copiar texto</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Consejos: obtendrás mejores resultados con imágenes nítidas, bien iluminadas y con el texto en horizontal.
+    </footer>
+  </div>
+
+  <!-- Tesseract.js desde CDN -->
+  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fileInput = $('file');
+    const dropzone = $('dropzone');
+    const preview = $('preview');
+    const runBtn = $('run');
+    const clearBtn = $('clear');
+    const progressEl = $('progress');
+    const statusEl = $('status');
+    const output = $('output');
+    const copyBtn = $('copy');
+    const langSel = $('lang');
+    const urlInput = $('url');
+    const loadUrlBtn = $('loadUrl');
+    const pasteBtn = $('pasteBtn');
+    const psmSel = $('psm');
+
+    let currentBlob = null;
+
+    function setStatus(msg) { statusEl.textContent = msg; }
+    function setProgress(v) { progressEl.value = v; }
+
+    function blobFromUrl(url) {
+      return fetch(url, { mode: 'cors' })
+        .then(r => {
+          if (!r.ok) throw new Error('No se pudo cargar la imagen.');
+          return r.blob();
+        });
+    }
+
+    function updatePreviewFromBlob(blob) {
+      currentBlob = blob;
+      const url = URL.createObjectURL(blob);
+      preview.src = url;
+      setStatus('Imagen cargada.');
+    }
+
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files?.[0];
+      if (f) updatePreviewFromBlob(f);
+    });
+
+    // Drag & drop
+    ;['dragenter','dragover'].forEach(ev =>
+      dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); })
+    );
+    ;['dragleave','drop'].forEach(ev =>
+      dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
+    );
+    dropzone.addEventListener('drop', e => {
+      const f = e.dataTransfer.files?.[0];
+      if (f) updatePreviewFromBlob(f);
+    });
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    // Cargar desde URL
+    loadUrlBtn.addEventListener('click', async () => {
+      const url = urlInput.value.trim();
+      if (!url) return;
+      try {
+        setStatus('Cargando imagen desde URL…');
+        const blob = await blobFromUrl(url);
+        updatePreviewFromBlob(blob);
+      } catch (err) {
+        setStatus('Error: ' + err.message);
+      }
+    });
+
+    // Pegar desde portapapeles (Chrome/Edge/Opera/Arc)
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              return updatePreviewFromBlob(blob);
+            }
+          }
+        }
+        setStatus('No se encontró imagen en el portapapeles.');
+      } catch (_) {
+        setStatus('Tu navegador no permite pegar imágenes desde el portapapeles.');
+      }
+    });
+
+    // Copiar resultado
+    copyBtn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(output.value || ''); setStatus('Texto copiado.'); }
+      catch { setStatus('No se pudo copiar.'); }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      currentBlob = null;
+      preview.removeAttribute('src');
+      output.value = '';
+      setProgress(0); setStatus('Listo.');
+      fileInput.value = ''; urlInput.value = '';
+    });
+
+    runBtn.addEventListener('click', async () => {
+      if (!currentBlob) return setStatus('Sube o pega una imagen primero.');
+      output.value = '';
+      setProgress(0); setStatus('Descargando modelos…');
+
+      // Configuración Tesseract
+      const lang = langSel.value || 'spa';
+      const psm = parseInt(psmSel.value, 10);
+
+      try {
+        const worker = await Tesseract.createWorker(lang, 1, {
+          logger: m => {
+            if (m.status === 'recognizing text' && m.progress != null) {
+              setStatus('Reconociendo… ' + Math.round(m.progress * 100) + '%');
+              setProgress(m.progress);
+            } else if (m.status) {
+              setStatus(m.status.charAt(0).toUpperCase() + m.status.slice(1) + '…');
+            }
+          },
+          workerPath: 'https://unpkg.com/tesseract.js@5.1.0/dist/worker.min.js',
+          corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
+        });
+
+        // Opciones (PSM)
+        await worker.setParameters({ tessedit_pageseg_mode: psm });
+
+        setStatus('Procesando imagen…');
+        const img = currentBlob;
+
+        const { data } = await worker.recognize(img);
+        output.value = data.text.trim();
+        setProgress(1); setStatus('Completado ✔');
+
+        await worker.terminate();
+      } catch (err) {
+        console.error(err);
+        setStatus('Error durante OCR: ' + (err.message || err));
+      }
+    });
+  </script>
+</body>
+</html>

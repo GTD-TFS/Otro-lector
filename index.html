@@ -3,32 +3,29 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Extraer texto de imagen (OCR con Tesseract.js)</title>
+  <title>OCR DNI (anverso) – Tesseract.js</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; padding: 1rem; background: #f6f7f9; color: #111; }
-    .app { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 1rem; box-shadow: 0 6px 30px rgba(0,0,0,.06); }
+    .app { max-width: 900px; margin: 0 auto; background: #fff; border-radius: 12px;
+           padding: 1rem; box-shadow: 0 6px 30px rgba(0,0,0,.06); }
     header { display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; }
     h1 { font-size: 1.25rem; margin: 0; }
     .controls { display: grid; gap: .75rem; grid-template-columns: 1fr; }
     .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
     label { font-weight: 600; }
-    input[type="file"], input[type="url"], select, button, textarea {
+    input[type="file"], select, button, textarea {
       padding: .6rem .7rem; border: 1px solid #dfe3e6; border-radius: 10px; background: #fff; font-size: 1rem;
     }
     button { cursor: pointer; }
     button.primary { background: #111; color: #fff; border: none; }
     button:disabled { opacity: .6; cursor: not-allowed; }
-    .dropzone {
-      border: 2px dashed #c7ccd1; border-radius: 12px; padding: 1rem; text-align: center; color: #555; background: #fafbfc;
-    }
-    .dropzone.drag { background: #eef6ff; border-color: #77aaff; }
     .preview-wrap { display: grid; grid-template-columns: 1fr; gap: .75rem; margin-top: 1rem; }
     .preview { width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
     progress { width: 100%; height: 14px; }
     .out { display: grid; gap: .5rem; margin-top: 1rem; }
-    textarea { width: 100%; min-height: 180px; resize: vertical; }
+    textarea { width: 100%; min-height: 200px; resize: vertical; }
     small.hint { color: #666; }
     footer { margin-top: 1rem; color: #667; font-size: .9rem; }
     @media (min-width: 840px) {
@@ -38,63 +35,47 @@
   </style>
 </head>
 <body>
-  <div class="app" role="application" aria-label="OCR en el navegador con Tesseract.js">
+  <div class="app" role="application" aria-label="OCR DNI con Tesseract.js">
     <header>
-      <h1>Extraer texto de imagen (OCR)</h1>
+      <h1>OCR DNI (anverso)</h1>
     </header>
 
     <div class="controls" id="controls">
       <div>
         <div class="row" aria-live="polite">
-          <label for="lang">Idioma del texto</label>
+          <label for="lang">Idioma (modelo Tesseract)</label>
           <select id="lang" title="Selecciona idioma">
             <option value="spa" selected>Español (spa)</option>
             <option value="eng">Inglés (eng)</option>
-            <option value="por">Portugués (por)</option>
-            <option value="fra">Francés (fra)</option>
-            <option value="deu">Alemán (deu)</option>
-            <option value="ita">Italiano (ita)</option>
-            <option value="cat">Catalán (cat)</option>
           </select>
+          <small class="hint">Para DNI en español, deja “spa”.</small>
         </div>
 
         <div class="row">
-          <label for="file">Imagen</label>
+          <label for="file">Imagen del DNI</label>
+          <!-- cámara del móvil o galería del dispositivo -->
           <input id="file" type="file" accept="image/*" capture="environment" />
-          <button id="pasteBtn" type="button">Pegar desde portapapeles</button>
         </div>
 
         <div class="row">
-          <label for="url">o URL de imagen</label>
-          <input id="url" type="url" placeholder="https://..." />
-          <button id="loadUrl" type="button">Cargar</button>
-        </div>
-
-        <div class="dropzone" id="dropzone" tabindex="0" aria-label="Arrastra y suelta una imagen aquí">
-          Arrastra y suelta una imagen aquí (o haz clic para seleccionar)
-        </div>
-
-        <div class="row">
-          <button id="run" class="primary" type="button">Reconocer texto</button>
-          <button id="clear" type="button">Limpiar</button>
-        </div>
-
-        <div class="row">
-          <label for="psm">Modo de segmentación (PSM)</label>
+          <label for="psm">Modo PSM</label>
           <select id="psm" title="Tesseract Page Segmentation Mode">
-            <option value="3" selected>3 – Automático (página completa)</option>
-            <option value="6">6 – Bloques uniformes de texto</option>
-            <option value="7">7 – Una sola línea</option>
-            <option value="8">8 – Una sola palabra</option>
-            <option value="13">13 – Línea raw, sin OSD</option>
+            <option value="6" selected>6 – Bloques uniformes</option>
+            <option value="3">3 – Automático</option>
+            <option value="13">13 – Línea raw</option>
           </select>
-          <small class="hint">Útil si el resultado no es preciso.</small>
+          <small class="hint">Prueba 6 para DNI.</small>
+        </div>
+
+        <div class="row">
+          <button id="run" class="primary" type="button">Reconocer</button>
+          <button id="clear" type="button">Limpiar</button>
         </div>
       </div>
 
       <div>
         <div class="preview-wrap">
-          <img id="preview" class="preview" alt="Vista previa de la imagen" />
+          <img id="preview" class="preview" alt="Vista previa" />
           <div>
             <label for="progress">Progreso</label>
             <progress id="progress" max="1" value="0" aria-live="polite"></progress>
@@ -102,15 +83,15 @@
           </div>
         </div>
         <div class="out">
-          <label for="output">Texto extraído</label>
-          <textarea id="output" placeholder="Aquí aparecerá el texto…"></textarea>
-          <button id="copy" type="button">Copiar texto</button>
+          <label for="output">Resultado</label>
+          <textarea id="output" placeholder="Aquí aparecerá el JSON y el array…"></textarea>
+          <button id="copy" type="button">Copiar</button>
         </div>
       </div>
     </div>
 
     <footer>
-      Consejos: obtendrás mejores resultados con imágenes nítidas, bien iluminadas y con el texto en horizontal.
+      Solo anverso. Coloca el DNI recto, bien iluminado y enfocado.
     </footer>
   </div>
 
@@ -119,7 +100,6 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const fileInput = $('file');
-    const dropzone = $('dropzone');
     const preview = $('preview');
     const runBtn = $('run');
     const clearBtn = $('clear');
@@ -128,23 +108,14 @@
     const output = $('output');
     const copyBtn = $('copy');
     const langSel = $('lang');
-    const urlInput = $('url');
-    const loadUrlBtn = $('loadUrl');
-    const pasteBtn = $('pasteBtn');
     const psmSel = $('psm');
+
+    window.U = window.U || function(x){ return (x ?? '').toString(); };
 
     let currentBlob = null;
 
     function setStatus(msg) { statusEl.textContent = msg; }
     function setProgress(v) { progressEl.value = v; }
-
-    function blobFromUrl(url) {
-      return fetch(url, { mode: 'cors' })
-        .then(r => {
-          if (!r.ok) throw new Error('No se pudo cargar la imagen.');
-          return r.blob();
-        });
-    }
 
     function updatePreviewFromBlob(blob) {
       currentBlob = blob;
@@ -158,51 +129,6 @@
       if (f) updatePreviewFromBlob(f);
     });
 
-    // Drag & drop
-    ;['dragenter','dragover'].forEach(ev =>
-      dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); })
-    );
-    ;['dragleave','drop'].forEach(ev =>
-      dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
-    );
-    dropzone.addEventListener('drop', e => {
-      const f = e.dataTransfer.files?.[0];
-      if (f) updatePreviewFromBlob(f);
-    });
-    dropzone.addEventListener('click', () => fileInput.click());
-
-    // Cargar desde URL
-    loadUrlBtn.addEventListener('click', async () => {
-      const url = urlInput.value.trim();
-      if (!url) return;
-      try {
-        setStatus('Cargando imagen desde URL…');
-        const blob = await blobFromUrl(url);
-        updatePreviewFromBlob(blob);
-      } catch (err) {
-        setStatus('Error: ' + err.message);
-      }
-    });
-
-    // Pegar desde portapapeles (Chrome/Edge/Opera/Arc)
-    pasteBtn.addEventListener('click', async () => {
-      try {
-        const items = await navigator.clipboard.read();
-        for (const item of items) {
-          for (const type of item.types) {
-            if (type.startsWith('image/')) {
-              const blob = await item.getType(type);
-              return updatePreviewFromBlob(blob);
-            }
-          }
-        }
-        setStatus('No se encontró imagen en el portapapeles.');
-      } catch (_) {
-        setStatus('Tu navegador no permite pegar imágenes desde el portapapeles.');
-      }
-    });
-
-    // Copiar resultado
     copyBtn.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(output.value || ''); setStatus('Texto copiado.'); }
       catch { setStatus('No se pudo copiar.'); }
@@ -213,15 +139,155 @@
       preview.removeAttribute('src');
       output.value = '';
       setProgress(0); setStatus('Listo.');
-      fileInput.value = ''; urlInput.value = '';
+      fileInput.value = '';
     });
 
+    /***************** UTILIDADES DNI *****************/
+    const NORM = s => (s??'')
+      .normalize('NFD').replace(/\p{Diacritic}/gu,'')
+      .replace(/\s+/g,' ')
+      .trim().toUpperCase();
+
+    function groupByLine(words, tolY=8){
+      const rows=[];
+      const sorted=(words||[])
+        .filter(w=>(w.text||'').trim())
+        .map(w=>({...w,y:w.bbox?.y0??0,x:w.bbox?.x0??0}))
+        .sort((a,b)=> a.y-b.y || a.x-b.x);
+      for(const w of sorted){
+        const r = rows.find(rr => Math.abs(rr.y - w.y) <= tolY);
+        if (r){ r.items.push(w); r.y = (r.y + w.y)/2; }
+        else rows.push({y:w.y, items:[w]});
+      }
+      for (const r of rows){
+        r.items.sort((a,b)=>a.x-b.x);
+        r.textRaw = r.items.map(t=>t.text).join(' ').trim();
+        r.text = NORM(r.textRaw);
+        const xs = r.items.map(t=>t.bbox?.x0??0), xe = r.items.map(t=>t.bbox?.x1??(t.bbox?.x0??0));
+        r.x0 = Math.min(...xs); r.x1 = Math.max(...xe);
+      }
+      return rows;
+    }
+
+    function findRowByLabel(rows, re){ return rows.find(r => re.test(r.text)) || null; }
+
+    function nextNonEmptyRowBelow(rows, anchor, maxDownPx=90){
+      if (!anchor) return null;
+      const after = rows.filter(r => r.y > anchor.y && (r.y - anchor.y) <= maxDownPx)
+                        .sort((a,b)=>a.y-b.y);
+      return after.find(r => r.textRaw && r.textRaw.trim().length>0) || null;
+    }
+
+    function cleanNameLike(s){
+      return (s||'')
+        .replace(/rn/g,'m')
+        .replace(/[^\p{L}\s'-]/gu,' ')
+        .replace(/\s+/g,' ')
+        .trim();
+    }
+    function cleanUpper(s){ return (s||'').toUpperCase().trim(); }
+
+    function extractDNIAnverso(tessData){
+      const words = tessData.words || [];
+      const rows = groupByLine(words);
+
+      const out = {
+        "Nombre": "",
+        "APELLIDOS": "",
+        "TIPO DOCUMENTO": "DNI",
+        "NºDOCUMENTO": "",
+        "SEXO": "",
+        "NACIONALIDAD": "",
+        "Nombre de los Padres": "",
+        "FECHA DE NACIMIENTO": "",
+        "LUGAR DE NACIMIENTO": "",
+        "DOMICILIO": ""
+      };
+
+      // 1) NOMBRE (etiqueta) → valor debajo
+      const rowNombre = findRowByLabel(rows, /^NOMBRE\b/);
+      if (rowNombre){
+        const val = nextNonEmptyRowBelow(rows, rowNombre, 85);
+        if (val) out["Nombre"] = cleanNameLike(val.textRaw);
+      }
+
+      // 2) APELLIDOS (etiqueta) → 1ª y 2ª fila de debajo
+      const rowApes = findRowByLabel(rows, /^APELLIDOS\b/);
+      if (rowApes){
+        const ap1 = nextNonEmptyRowBelow(rows, rowApes, 85);
+        let ap2 = null;
+        if (ap1){
+          ap2 = nextNonEmptyRowBelow(rows, ap1, 80);
+          if (ap2 && /(SEXO|NACIONALIDAD|FECHA)/.test(ap2.text)) ap2 = null;
+        }
+        const apellidos = [ap1?.textRaw, ap2?.textRaw].filter(Boolean).map(cleanNameLike).join(' ');
+        if (apellidos) out["APELLIDOS"] = cleanUpper(apellidos);
+      }
+
+      // 3) SEXO: debajo (M/F)
+      const rowSexo = findRowByLabel(rows, /^SEXO\b/);
+      if (rowSexo){
+        const r = nextNonEmptyRowBelow(rows, rowSexo, 80);
+        if (r){
+          const m = r.textRaw.match(/\b[MF]\b/i);
+          out["SEXO"] = m ? m[0].toUpperCase() : cleanUpper(r.textRaw.replace(/[^A-Z]/gi,''));
+        }
+      }
+
+      // 4) NACIONALIDAD: debajo (ESP)
+      const rowNac = findRowByLabel(rows, /NACIONALIDAD\b/);
+      if (rowNac){
+        const r = nextNonEmptyRowBelow(rows, rowNac, 90);
+        if (r){
+          const val = NORM(r.textRaw).replace(/[^A-Z]/g,'');
+          out["NACIONALIDAD"] = (val.match(/^[A-Z]{2,4}$/)?.[0]) || cleanUpper(r.textRaw);
+        }
+      }
+
+      // 5) FECHA DE NACIMIENTO: debajo (dd/mm/aaaa)
+      const rowDob = findRowByLabel(rows, /FECHA.*NACIM/);
+      if (rowDob){
+        const r = nextNonEmptyRowBelow(rows, rowDob, 100);
+        if (r){
+          const txt = r.textRaw;
+          const m = txt.match(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/);
+          out["FECHA DE NACIMIENTO"] = m
+            ? `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${m[3].length===2?('19'+m[3]):m[3]}`
+            : txt.trim();
+        }
+      }
+
+      // 6) Nº de DNI: patrón 8 dígitos + letra
+      const allTxt = (words||[]).map(w=>w.text||'').join(' ');
+      const mNif = NORM(allTxt).match(/\b\d{8}[ -]?[A-Z]\b/);
+      if (mNif) out["NºDOCUMENTO"] = mNif[0].replace(/[ -]/g,'');
+
+      return out;
+    }
+
+    function buildExportFromDNI(out){
+      const domDisplay = out["DOMICILIO"] || "";
+      const salida = [
+        ["Nombre", U(out["Nombre"])],
+        ["Apellidos", U(out["APELLIDOS"])],
+        ["Tipo de documento", U(out["TIPO DOCUMENTO"])],
+        ["Nº Documento", U(out["NºDOCUMENTO"])],
+        ["Sexo", U(out["SEXO"])],
+        ["Nacionalidad", U(out["NACIONALIDAD"])],
+        ["Nombre de los Padres", U(out["Nombre de los Padres"])],
+        ["Fecha de nacimiento", U(out["FECHA DE NACIMIENTO"])],
+        ["Lugar de nacimiento", U(out["LUGAR DE NACIMIENTO"])],
+        ["Domicilio", U(domDisplay)]
+      ];
+      return { data: out, salida, domDisplay };
+    }
+
+    /***************** RECONOCER *****************/
     runBtn.addEventListener('click', async () => {
-      if (!currentBlob) return setStatus('Sube o pega una imagen primero.');
+      if (!currentBlob) return setStatus('Selecciona o haz la foto del DNI primero.');
       output.value = '';
       setProgress(0); setStatus('Descargando modelos…');
 
-      // Configuración Tesseract
       const lang = langSel.value || 'spa';
       const psm = parseInt(psmSel.value, 10);
 
@@ -239,16 +305,25 @@
           corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
         });
 
-        // Opciones (PSM)
-        await worker.setParameters({ tessedit_pageseg_mode: psm });
+        await worker.setParameters({
+          tessedit_pageseg_mode: psm,
+          // whitelist útil para DNI (letras, dígitos y separadores de fecha)
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÜÑ0123456789/-. '
+        });
 
         setStatus('Procesando imagen…');
-        const img = currentBlob;
+        const { data } = await worker.recognize(currentBlob);
 
-        const { data } = await worker.recognize(img);
-        output.value = data.text.trim();
+        const parsed = extractDNIAnverso(data);
+        const { data: exportData, salida } = buildExportFromDNI(parsed);
+
+        output.value =
+          '--- Campos (DNI anverso) ---\n' +
+          JSON.stringify(exportData, null, 2) +
+          '\n\n--- Array exportación ---\n' +
+          JSON.stringify(salida, null, 2);
+
         setProgress(1); setStatus('Completado ✔');
-
         await worker.terminate();
       } catch (err) {
         console.error(err);

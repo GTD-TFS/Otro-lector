@@ -18,7 +18,8 @@ export class SmartCamera {
         video: {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
-          height: { ideal: 720 }
+          height: { ideal: 720 },
+          aspectRatio: { ideal: 1.777 } // 📸 formato horizontal 16:9
         }
       });
       this.video.srcObject = this.stream;
@@ -71,27 +72,27 @@ export class SmartCamera {
       const score = this.focusScore();
       const brightness = this.brightnessScore();
 
-      // ⚙️ Modo permisivo: enfoque y luz flexibles
+      // ⚙️ Nivel medio (5–6): exige un poco más de nitidez y luz adecuada
       let state = 'bad';
-      if (score > 25 && brightness > 25 && brightness < 250) state = 'good';
-      else if (score > 15 && brightness > 20 && brightness < 255) state = 'mid';
+      if (score > 35 && brightness > 35 && brightness < 230) state = 'good';
+      else if (score > 20 && brightness > 25 && brightness < 245) state = 'mid';
       else state = 'bad';
 
       this.container.className = state;
 
       if (state === 'good') {
-        this.msg.textContent = '✅ Listo para capturar';
+        this.msg.textContent = '✅ Enfocado y buena luz';
         this.goodCount++;
       } else if (state === 'mid') {
-        this.msg.textContent = '🟡 Casi listo, ajusta un poco';
+        this.msg.textContent = '🟡 Ajusta un poco (enfoque/luz)';
         this.goodCount = 0;
       } else {
-        this.msg.textContent = '🔴 Demasiado borroso o con reflejos';
+        this.msg.textContent = '🔴 Borroso o reflejos';
         this.goodCount = 0;
       }
 
-      // 🔁 Auto-disparo tras 0.6 s estable (2 ciclos)
-      if (this.goodCount >= 2) {
+      // 🔁 Auto-disparo tras 0.9 s estable (3 ciclos)
+      if (this.goodCount >= 3) {
         this.goodCount = 0;
         this.capture();
       }
@@ -139,7 +140,7 @@ export class SmartCamera {
     for (const g of gray) variance += (g - mean) ** 2;
     variance /= gray.length;
 
-    return variance / 100; // normalizado
+    return variance / 100;
   }
 
   // ---- Detección de brillo ----
@@ -153,7 +154,7 @@ export class SmartCamera {
     let sum = 0, n = d.length / 4;
     for (let i = 0; i < d.length; i += 4)
       sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    return sum / n; // rango 0–255
+    return sum / n;
   }
 
   // ---- Preprocesado: grises + contraste ----
@@ -163,7 +164,6 @@ export class SmartCamera {
     let min = 255, max = 0;
     const gray = new Uint8Array(w * h);
 
-    // Escala de grises + rango dinámico
     for (let i = 0, j = 0; i < d.length; i += 4, j++) {
       const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
       gray[j] = g;

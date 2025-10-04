@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR DNI - Preprocesado mejorado</title>
+  <title>OCR DNI - con estructura</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
@@ -16,41 +16,53 @@
     input[type="file"], select, button, textarea {
       padding: .6rem .7rem; border: 1px solid #dfe3e6; border-radius: 10px; background: #fff; font-size: 1rem;
     }
-    button.primary { background: #111; color: #fff; border: none; cursor: pointer; }
+    button.primary { color: #fff; border: none; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
     .preview { width: 100%; max-height: 320px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
-    textarea { width: 100%; min-height: 200px; resize: vertical; }
+    textarea { width: 100%; min-height: 180px; resize: vertical; }
+    pre { background: #f7f7f7; border-radius: 8px; padding: .7rem; overflow-x: auto; }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>OCR DNI (anverso) – versión mejorada</h1>
+    <h1>OCR DNI – anverso + estructura</h1>
 
     <!-- Entrada -->
     <div class="row">
-      <button id="fotoBtn" type="button" class="primary">📸 Hacer foto</button>
+      <button id="fotoBtn" type="button">📸 Hacer foto</button>
       <input id="fotoInput" type="file" accept="image/*" capture="environment" hidden>
-
       <button id="archivoBtn" type="button">📁 Elegir archivo</button>
       <input id="archivoInput" type="file" accept="image/*" hidden>
     </div>
 
     <!-- Idioma -->
     <div class="row">
-      <label for="lang">Idioma del texto</label>
+      <label for="lang">Idioma</label>
       <select id="lang">
         <option value="spa" selected>Español</option>
         <option value="eng">Inglés</option>
       </select>
-      <button id="run" class="primary" type="button">Leer texto</button>
+
+      <!-- Botón con color distinto en esta versión -->
+      <button id="run" class="primary" type="button" style="background:#d35400;">Leer texto</button>
       <button id="clear" type="button">Limpiar</button>
     </div>
 
     <img id="preview" class="preview" alt="Vista previa" />
 
+    <!-- Resultados -->
     <div class="row" style="flex-direction:column; align-items:stretch;">
       <label for="output">Texto detectado y campos extraídos</label>
       <textarea id="output" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
+    </div>
+
+    <!-- Estructura OCR -->
+    <div class="row" style="flex-direction:column; align-items:stretch;">
+      <div class="row" style="justify-content:space-between; padding:0;">
+        <label>Estructura OCR (líneas y coordenadas)</label>
+        <button id="toggleStruct" type="button">Mostrar/Ocultar</button>
+      </div>
+      <pre id="structure" style="display:none;"></pre>
     </div>
   </div>
 
@@ -62,179 +74,106 @@
     const archivoBtn = $('archivoBtn'), archivoInput = $('archivoInput');
     const runBtn = $('run'), clearBtn = $('clear');
     const preview = $('preview'), output = $('output'), langSel = $('lang');
+    const toggleStructBtn = $('toggleStruct'), structure = $('structure');
     let currentBlob = null;
+    let lastData = null;
 
     fotoBtn.addEventListener('click', () => fotoInput.click());
     archivoBtn.addEventListener('click', () => archivoInput.click());
 
-    fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0], 'Foto cargada.'));
-    archivoInput.addEventListener('change', () => onPick(archivoInput.files?.[0], 'Archivo cargado.'));
+    fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0]));
+    archivoInput.addEventListener('change', () => onPick(archivoInput.files?.[0]));
 
-    function onPick(file, msg){
+    function onPick(file){
       if (!file) return;
       currentBlob = file;
       preview.src = URL.createObjectURL(file);
-      output.value = msg + "\n";
+      output.value = '';
+      structure.textContent = '';
+      structure.style.display = 'none';
     }
 
     clearBtn.addEventListener('click', () => {
-      currentBlob = null;
-      fotoInput.value = '';
-      archivoInput.value = '';
-      preview.removeAttribute('src');
-      output.value = '';
+      currentBlob = null; lastData = null;
+      fotoInput.value=''; archivoInput.value='';
+      preview.removeAttribute('src'); output.value='';
+      structure.textContent=''; structure.style.display='none';
     });
 
-    // === PREPROCESAMIENTO DE IMAGEN ===
-    async function preprocessImage(blob) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        const url = URL.createObjectURL(blob);
-        img.onload = () => {
-          const scale = 2.5; // Aumenta resolución
-          const canvas = document.createElement("canvas");
-          canvas.width = img.width * scale;
-          canvas.height = img.height * scale;
-          const ctx = canvas.getContext("2d");
-
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-
-          // Convertir a blanco y negro (contraste alto)
-          for (let i = 0; i < data.length; i += 4) {
-            const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-            const val = avg < 128 ? 0 : 255;
-            data[i] = data[i + 1] = data[i + 2] = val;
-          }
-          ctx.putImageData(imageData, 0, 0);
-          canvas.toBlob((b) => resolve(b), "image/png");
-        };
-        img.src = url;
-      });
-    }
+    toggleStructBtn.addEventListener('click', () => {
+      if (!lastData) { alert('Primero pulsa "Leer texto"'); return; }
+      structure.style.display = structure.style.display==='none' ? '' : 'none';
+    });
 
     runBtn.addEventListener('click', async () => {
       if (!currentBlob) return alert('Selecciona o haz una foto primero.');
-      const lang = langSel.value || 'spa';
-      output.value = 'Procesando imagen y reconociendo texto…';
+      output.value = 'Reconociendo…';
 
       try {
-        const worker = await Tesseract.createWorker(lang, 1, {
+        const worker = await Tesseract.createWorker(langSel.value || 'spa', 1, {
           workerPath: 'https://unpkg.com/tesseract.js@5.1.0/dist/worker.min.js',
           corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js'
         });
 
         await worker.setParameters({ tessedit_pageseg_mode: 6 });
+        const { data } = await worker.recognize(currentBlob);
+        lastData = data;
 
-        // 🔍 Preprocesar imagen antes del OCR
-        const preprocessed = await preprocessImage(currentBlob);
-
-        const { data } = await worker.recognize(preprocessed);
         const texto = data.text.trim();
         const parsed = parseDNI(texto);
+        output.value = texto + '\n\n--- Campos ---\n' + JSON.stringify(parsed, null, 2);
 
-        output.value = texto + '\n\n--- Campos (DNI anverso) ---\n' + JSON.stringify(parsed, null, 2);
+        renderStructure(data);
         await worker.terminate();
       } catch (err) {
         output.value = 'Error: ' + err.message;
       }
     });
 
-    // ====== Parser simple desde texto crudo ======
+    // === Estructura OCR: agrupar palabras en líneas por Y ===
+    function renderStructure(data){
+      const words = (data.words||[]).filter(w=>w.text.trim());
+      words.sort((a,b)=>a.bbox.y0-b.bbox.y0 || a.bbox.x0-b.bbox.x0);
+
+      const tolY=8, rows=[];
+      for (const w of words){
+        const y=w.bbox.y0;
+        const r=rows.find(rr=>Math.abs(rr.y-y)<=tolY);
+        if(r){r.items.push(w); r.y=(r.y+y)/2;}
+        else rows.push({y,items:[w]});
+      }
+      for(const r of rows) r.items.sort((a,b)=>a.bbox.x0-b.bbox.x0);
+
+      const lines=rows.sort((a,b)=>a.y-b.y)
+        .map((r,i)=>`${String(i+1).padStart(2,'0')} | y≈${Math.round(r.y)} | ${r.items.map(it=>it.text).join(' ')}`);
+      structure.textContent = lines.join('\\n');
+    }
+
+    // === Parser básico de DNI ===
     function norm(s){
       return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
-               .replace(/[^\p{L}\p{N}\n\s:/.-]/gu,' ')
-               .replace(/\s+/g,' ')
-               .trim().toUpperCase();
+        .replace(/[^\p{L}\p{N}\n\s:/.-]/gu,' ')
+        .replace(/\s+/g,' ').trim().toUpperCase();
     }
-    function splitLines(raw){
-      return (raw||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    }
+    function splitLines(raw){ return (raw||'').split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean); }
 
     function parseDNI(raw){
       const out = {
-        "Nombre": "",
-        "APELLIDOS": "",
-        "TIPO DOCUMENTO": "DNI",
-        "NºDOCUMENTO": "",
-        "SEXO": "",
-        "NACIONALIDAD": "",
-        "Nombre de los Padres": "",
-        "FECHA DE NACIMIENTO": "",
-        "LUGAR DE NACIMIENTO": "",
-        "DOMICILIO": ""
+        "Nombre": "", "APELLIDOS": "", "TIPO DOCUMENTO": "DNI",
+        "NºDOCUMENTO": "", "SEXO": "", "NACIONALIDAD": "",
+        "Nombre de los Padres": "", "FECHA DE NACIMIENTO": "",
+        "LUGAR DE NACIMIENTO": "", "DOMICILIO": ""
       };
+      const rawLines=splitLines(raw), lines=splitLines(norm(raw));
+      const nextLine=(L,i)=>L.slice(i+1).find(x=>x)||"", nextTwo=(L,i)=>L.slice(i+1).filter(x=>x).slice(0,2);
 
-      const rawLines = splitLines(raw);
-      const lines = splitLines(norm(raw));
-
-      const nextLine = (L,i)=> L.slice(i+1).find(x=>x && x.length>0) || "";
-      const nextTwo  = (L,i)=> L.slice(i+1).filter(x=>x && x.length>0).slice(0,2);
-
-      // APELLIDOS
-      {
-        const idx = lines.findIndex(l => /\bAPELLIDOS\b/.test(l));
-        if (idx >= 0) {
-          const [l1,l2] = nextTwo(lines, idx);
-          const ap = [l1,l2].filter(Boolean).join(' ').replace(/[^A-Z '\-]/g,' ').replace(/\s+/g,' ').trim();
-          if (ap) out["APELLIDOS"] = ap;
-        }
-      }
-
-      // NOMBRE
-      {
-        const idx = lines.findIndex(l => /\bNOMBRE\b/.test(l));
-        if (idx >= 0) {
-          const l = nextLine(rawLines, idx) || nextLine(lines, idx);
-          const nom = (l||'').replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ '\-]/g,' ').replace(/\s+/g,' ').trim();
-          if (nom) out["Nombre"] = nom;
-        }
-      }
-
-      // SEXO
-      {
-        const idx = lines.findIndex(l => /\bSEXO\b/.test(l));
-        let sex = '';
-        if (idx >= 0) {
-          const l = nextLine(lines, idx);
-          sex = (l.match(/\b[MF]\b/)||[])[0] || '';
-        }
-        if (!sex) sex = (norm(raw).match(/\b[MF]\b/)||[])[0] || '';
-        if (sex) out["SEXO"] = sex;
-      }
-
-      // NACIONALIDAD
-      {
-        const idx = lines.findIndex(l => /\bNACIONALIDAD\b/.test(l));
-        let val = '';
-        if (idx >= 0) {
-          const l = nextLine(lines, idx);
-          val = (l.match(/\b[A-Z]{2,4}\b/)||[])[0] || '';
-        }
-        if (!val) {
-          val = /\bESP\b/.test(norm(raw)) ? 'ESP' : (norm(raw).match(/\b[A-Z]{2,4}\b/)||[])[0] || '';
-          if (val === 'DNI') val = '';
-        }
-        if (val) out["NACIONALIDAD"] = val;
-      }
-
-      // FECHA NACIMIENTO
-      {
-        const m = raw.match(/\b(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})\b/);
-        if (m) {
-          const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
-          const yy = m[3].length===2 ? ('19'+m[3]) : m[3];
-          out["FECHA DE NACIMIENTO"] = `${dd}/${mm}/${yy}`;
-        }
-      }
-
-      // Nº DOCUMENTO
-      {
-        const m = norm(raw).match(/\b\d{8}[ -]?[A-Z]\b/);
-        if (m) out["NºDOCUMENTO"] = m[0].replace(/[ -]/g,'');
-      }
-
+      const idxAp=lines.findIndex(l=>/\\bAPELLIDOS\\b/.test(l));
+      if(idxAp>=0){const [l1,l2]=nextTwo(lines,idxAp);out["APELLIDOS"]=[l1,l2].filter(Boolean).join(' ');}
+      const idxNom=lines.findIndex(l=>/\\bNOMBRE\\b/.test(l));
+      if(idxNom>=0){const l=nextLine(rawLines,idxNom)||nextLine(lines,idxNom);out["Nombre"]=l;}
+      const mFecha=raw.match(/\\b(\\d{1,2})[\\/\\.\\-\\s](\\d{1,2})[\\/\\.\\-\\s](\\d{2,4})\\b/);
+      if(mFecha){out["FECHA DE NACIMIENTO"]=`${mFecha[1].padStart(2,'0')}/${mFecha[2].padStart(2,'0')}/${mFecha[3].length===2?'19'+mFecha[3]:mFecha[3]}`;}
+      const mDoc=norm(raw).match(/\\b\\d{8}[ -]?[A-Z]\\b/);if(mDoc) out["NºDOCUMENTO"]=mDoc[0].replace(/[ -]/g,'');
       return out;
     }
   </script>

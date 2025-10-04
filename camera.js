@@ -7,7 +7,7 @@ export class SmartCamera {
     this.stream = null;
     this.focusTimer = null;
     this.goodCount = 0;
-    this.onReadyToCapture = null;
+    this.onReadyToCapture = null; // (blob) => {}
     this.track = null;
     this.torchEnabled = false;
   }
@@ -19,7 +19,7 @@ export class SmartCamera {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          aspectRatio: { ideal: 1.777 } // 📸 formato horizontal 16:9
+          aspectRatio: { ideal: 1.777 } // 16:9 horizontal
         }
       });
       this.video.srcObject = this.stream;
@@ -36,16 +36,14 @@ export class SmartCamera {
   async toggleTorch() {
     if (!this.track) return;
     try {
-      const caps = this.track.getCapabilities();
+      const caps = this.track.getCapabilities?.() || {};
       if (!caps.torch) {
         this.msg.textContent = "💡 Linterna no disponible";
         return;
       }
       this.torchEnabled = !this.torchEnabled;
       await this.track.applyConstraints({ advanced: [{ torch: this.torchEnabled }] });
-      this.msg.textContent = this.torchEnabled
-        ? "💡 Linterna encendida"
-        : "💡 Linterna apagada";
+      this.msg.textContent = this.torchEnabled ? "💡 Linterna encendida" : "💡 Linterna apagada";
     } catch (err) {
       console.warn("No se pudo cambiar la linterna:", err);
     }
@@ -72,7 +70,7 @@ export class SmartCamera {
       const score = this.focusScore();
       const brightness = this.brightnessScore();
 
-      // ⚙️ Nivel medio (5–6): exige un poco más de nitidez y luz adecuada
+      // Nivel medio 5–6
       let state = 'bad';
       if (score > 35 && brightness > 35 && brightness < 230) state = 'good';
       else if (score > 20 && brightness > 25 && brightness < 245) state = 'mid';
@@ -91,7 +89,7 @@ export class SmartCamera {
         this.goodCount = 0;
       }
 
-      // 🔁 Auto-disparo tras 0.9 s estable (3 ciclos)
+      // Auto-disparo tras ~0,9 s estable
       if (this.goodCount >= 3) {
         this.goodCount = 0;
         this.capture();
@@ -105,24 +103,73 @@ export class SmartCamera {
     this.capture();
   }
 
+  // Captura única (si el vídeo viene “vertical”, rotamos para guardar horizontal)
   capture() {
-    const c = document.createElement('canvas');
-    c.width = this.video.videoWidth;
-    c.height = this.video.videoHeight;
-    const ctx = c.getContext('2d');
-    ctx.drawImage(this.video, 0, 0);
+    const vw = this.video.videoWidth;
+    const vh = this.video.videoHeight;
+
+    let c = document.createElement('canvas');
+    let ctx = null;
+
+    if (vh > vw) {
+      // rotar 90º para horizontal
+      c.width = vh;
+      c.height = vw;
+      ctx = c.getContext('2d');
+      ctx.translate(c.width / 2, c.height / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(this.video, -vw / 2, -vh / 2);
+    } else {
+      c.width = vw;
+      c.height = vh;
+      ctx = c.getContext('2d');
+      ctx.drawImage(this.video, 0, 0);
+    }
+
     this.preprocess(ctx, c.width, c.height);
-    c.toBlob(b => {
-      if (this.onReadyToCapture) this.onReadyToCapture(b);
-    }, 'image/jpeg', 0.9);
+    c.toBlob(b => { this.onReadyToCapture && this.onReadyToCapture(b); }, 'image/jpeg', 0.9);
     this.msg.textContent = '📸 Imagen capturada';
   }
 
-  // ---- Detección de enfoque ----
+  // Ráfaga: devuelve una promesa con N blobs, separados por delay ms
+  async burstCapture(n = 5, delay = 180) {
+    const blobs = [];
+    for (let i = 0; i < n; i++) {
+      await new Promise(res => setTimeout(res, delay));
+      blobs.push(await this.captureOnce());
+    }
+    return blobs;
+  }
+
+  // helper para burst (mismo giro horizontal que capture)
+  captureOnce() {
+    return new Promise(resolve => {
+      const vw = this.video.videoWidth;
+      const vh = this.video.videoHeight;
+      let c = document.createElement('canvas');
+      let ctx = null;
+
+      if (vh > vw) {
+        c.width = vh; c.height = vw;
+        ctx = c.getContext('2d');
+        ctx.translate(c.width / 2, c.height / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(this.video, -vw / 2, -vh / 2);
+      } else {
+        c.width = vw; c.height = vh;
+        ctx = c.getContext('2d');
+        ctx.drawImage(this.video, 0, 0);
+      }
+
+      this.preprocess(ctx, c.width, c.height);
+      c.toBlob(b => resolve(b), 'image/jpeg', 0.9);
+    });
+  }
+
+  // ---- Detección de enfoque (variance of Laplacian aprox) ----
   focusScore() {
     const c = document.createElement('canvas');
-    c.width = 160;
-    c.height = 120;
+    c.width = 160; c.height = 90;
     const ctx = c.getContext('2d');
     ctx.drawImage(this.video, 0, 0, c.width, c.height);
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
@@ -146,18 +193,18 @@ export class SmartCamera {
   // ---- Detección de brillo ----
   brightnessScore() {
     const c = document.createElement('canvas');
-    c.width = 64;
-    c.height = 48;
+    c.width = 64; c.height = 36;
     const ctx = c.getContext('2d');
     ctx.drawImage(this.video, 0, 0, c.width, c.height);
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     let sum = 0, n = d.length / 4;
-    for (let i = 0; i < d.length; i += 4)
+    for (let i = 0; i < d.length; i += 4) {
       sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    return sum / n;
+    }
+    return sum / n; // 0..255
   }
 
-  // ---- Preprocesado: grises + contraste ----
+  // ---- Preprocesado: gris + estirado de contraste ----
   preprocess(ctx, w, h) {
     const img = ctx.getImageData(0, 0, w, h);
     const d = img.data;
@@ -166,18 +213,14 @@ export class SmartCamera {
 
     for (let i = 0, j = 0; i < d.length; i += 4, j++) {
       const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      gray[j] = g;
-      if (g < min) min = g;
-      if (g > max) max = g;
+      gray[j] = g; if (g < min) min = g; if (g > max) max = g;
     }
-
     const range = max - min || 1;
     for (let j = 0; j < gray.length; j++) {
       const v = ((gray[j] - min) * 255) / range;
       const k = j * 4;
       d[k] = d[k + 1] = d[k + 2] = v;
     }
-
     ctx.putImageData(img, 0, 0);
   }
 }

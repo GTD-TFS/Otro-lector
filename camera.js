@@ -8,8 +8,28 @@ export class SmartCamera {
     this.focusTimer = null;
     this.goodCount = 0;
     this.onReadyToCapture = null; // (blob) => {}
+    this.onAutoBatchReady = null; // (blobs[]) => {}
     this.track = null;
     this.torchEnabled = false;
+
+    // Auto-consenso
+    this.autoCollecting = false;
+    this.collected = [];
+    this.hashes = [];
+    this.orientSamples = [];
+    this.lastGreenAt = 0;
+    this.cooldownMs = 800; // no capturar "verde" más de 1 vez por ~0.8s
+    this.targetCount = 5;
+    this.timeoutId = null;
+
+    // Orientación (si existe)
+    this.lastDeviceOrientation = null;
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', (e) => {
+        const { alpha, beta, gamma } = e;
+        this.lastDeviceOrientation = { alpha, beta, gamma, t: Date.now() };
+      }, { passive: true });
+    }
   }
 
   async start() {
@@ -59,8 +79,36 @@ export class SmartCamera {
       clearInterval(this.focusTimer);
       this.focusTimer = null;
     }
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = null;
+    }
+    this.autoCollecting = false;
+    this.collected = [];
+    this.hashes = [];
+    this.orientSamples = [];
     this.container.className = 'bad';
     this.msg.textContent = 'Cámara detenida';
+  }
+
+  // === Auto-consenso: iniciar recolección hasta N distintas o timeoutMs ===
+  startAutoConsensus(n = 5, timeoutMs = 15000) {
+    this.targetCount = n;
+    this.collected = [];
+    this.hashes = [];
+    this.orientSamples = [];
+    this.autoCollecting = true;
+    if (this.timeoutId) clearTimeout(this.timeoutId);
+    this.timeoutId = setTimeout(() => {
+      this.finishAutoConsensus();
+    }, timeoutMs);
+    this.msg.textContent = `⏳ Buscando ${n} capturas distintas…`;
+  }
+  finishAutoConsensus() {
+    this.autoCollecting = false;
+    if (this.timeoutId) { clearTimeout(this.timeoutId); this.timeoutId = null; }
+    if (this.onAutoBatchReady) this.onAutoBatchReady(this.collected.slice());
+    this.msg.textContent = `📦 Lote listo: ${this.collected.length} imágenes`;
   }
 
   monitor() {
@@ -70,7 +118,7 @@ export class SmartCamera {
       const score = this.focusScore();
       const brightness = this.brightnessScore();
 
-      // Nivel medio 5–6
+      // Exigencia 5–6
       let state = 'bad';
       if (score > 35 && brightness > 35 && brightness < 230) state = 'good';
       else if (score > 20 && brightness > 25 && brightness < 245) state = 'mid';
@@ -79,7 +127,7 @@ export class SmartCamera {
       this.container.className = state;
 
       if (state === 'good') {
-        this.msg.textContent = '✅ Enfocado y buena luz';
+        this.msg.textContent = this.autoCollecting ? '✅ Buen frame (buscando diversidad)…' : '✅ Enfocado y buena luz';
         this.goodCount++;
       } else if (state === 'mid') {
         this.msg.textContent = '🟡 Ajusta un poco (enfoque/luz)';
@@ -89,84 +137,112 @@ export class SmartCamera {
         this.goodCount = 0;
       }
 
-      // Auto-disparo tras ~0,9 s estable
-      if (this.goodCount >= 3) {
+      // Auto-captura (normal)
+      if (!this.autoCollecting && this.goodCount >= 3) {
         this.goodCount = 0;
-        this.capture();
+        this.capture((blob) => this.onReadyToCapture && this.onReadyToCapture(blob));
+      }
+
+      // Auto-consenso: capturar solo cuando hay buen frame y diversidad
+      if (this.autoCollecting && this.goodCount >= 2) {
+        const now = Date.now();
+        if (now - this.lastGreenAt < this.cooldownMs) return;
+        this.lastGreenAt = now;
+        // Evaluar diversidad y, si cumple, agregar
+        this.capture(async (blob, hash) => {
+          const diverse = this.isDiverse(hash, this.lastDeviceOrientation);
+          if (diverse) {
+            this.collected.push(blob);
+            this.hashes.push(hash);
+            if (this.lastDeviceOrientation) this.orientSamples.push(this.lastDeviceOrientation);
+            this.msg.textContent = `✅ Captura distinta (${this.collected.length}/${this.targetCount})`;
+            if (this.collected.length >= this.targetCount) {
+              this.finishAutoConsensus();
+            }
+          } else {
+            this.msg.textContent = '↩️ Captura descartada (demasiado similar)';
+          }
+        });
       }
     }, 300);
   }
 
   manualCapture() {
     if (!this.active) return;
-    this.msg.textContent = '📸 Captura manual solicitada';
-    this.capture();
+    this.msg.textContent = '📸 Captura manual';
+    this.capture((blob) => this.onReadyToCapture && this.onReadyToCapture(blob));
   }
 
-  // Captura única (si el vídeo viene “vertical”, rotamos para guardar horizontal)
-  capture() {
+  // Captura con giro a horizontal + preprocesado + dHash
+  capture(cb) {
     const vw = this.video.videoWidth;
     const vh = this.video.videoHeight;
 
     let c = document.createElement('canvas');
     let ctx = null;
 
-    if (vh > vw) {
-      // rotar 90º para horizontal
-      c.width = vh;
-      c.height = vw;
+    if (vh > vw) { // rotar 90º
+      c.width = vh; c.height = vw;
       ctx = c.getContext('2d');
       ctx.translate(c.width / 2, c.height / 2);
       ctx.rotate(Math.PI / 2);
       ctx.drawImage(this.video, -vw / 2, -vh / 2);
     } else {
-      c.width = vw;
-      c.height = vh;
+      c.width = vw; c.height = vh;
       ctx = c.getContext('2d');
       ctx.drawImage(this.video, 0, 0);
     }
 
     this.preprocess(ctx, c.width, c.height);
-    c.toBlob(b => { this.onReadyToCapture && this.onReadyToCapture(b); }, 'image/jpeg', 0.9);
-    this.msg.textContent = '📸 Imagen capturada';
+    const hash = this.dhash(c, 8); // 8x8 -> 64 bits
+    c.toBlob(b => cb && cb(b, hash), 'image/jpeg', 0.9);
   }
 
-  // Ráfaga: devuelve una promesa con N blobs, separados por delay ms
-  async burstCapture(n = 5, delay = 180) {
-    const blobs = [];
-    for (let i = 0; i < n; i++) {
-      await new Promise(res => setTimeout(res, delay));
-      blobs.push(await this.captureOnce());
+  // Diversidad: Hamming(dHash) >= 12 y, si hay orientación, delta >= 3°
+  isDiverse(newHash, orient) {
+    if (!newHash) return true;
+    for (const old of this.hashes) {
+      if (this.hamming(old, newHash) < 12) return false;
     }
-    return blobs;
-  }
-
-  // helper para burst (mismo giro horizontal que capture)
-  captureOnce() {
-    return new Promise(resolve => {
-      const vw = this.video.videoWidth;
-      const vh = this.video.videoHeight;
-      let c = document.createElement('canvas');
-      let ctx = null;
-
-      if (vh > vw) {
-        c.width = vh; c.height = vw;
-        ctx = c.getContext('2d');
-        ctx.translate(c.width / 2, c.height / 2);
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(this.video, -vw / 2, -vh / 2);
-      } else {
-        c.width = vw; c.height = vh;
-        ctx = c.getContext('2d');
-        ctx.drawImage(this.video, 0, 0);
+    if (orient && this.orientSamples.length) {
+      const last = this.orientSamples[this.orientSamples.length - 1];
+      const delta = (a, b) => Math.abs((a||0) - (b||0));
+      if (Math.max(delta(orient.alpha, last.alpha), delta(orient.beta, last.beta), delta(orient.gamma, last.gamma)) < 3) {
+        // muy parecida en orientación
+        return false;
       }
-
-      this.preprocess(ctx, c.width, c.height);
-      c.toBlob(b => resolve(b), 'image/jpeg', 0.9);
-    });
+    }
+    return true;
   }
 
-  // ---- Detección de enfoque (variance of Laplacian aprox) ----
+  // dHash perceptual (grayscale, 9x8 -> compara adyacentes en X, devuelve string bits)
+  dhash(canvas, size=8) {
+    const w = size + 1, h = size;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const img = ctx.getImageData(0,0,w,h).data;
+    const gray = [];
+    for (let i=0;i<img.length;i+=4){
+      gray.push(0.299*img[i] + 0.587*img[i+1] + 0.114*img[i+2]);
+    }
+    let bits = '';
+    for (let y=0;y<h;y++){
+      for (let x=0;x<size;x++){
+        const i1 = y*w + x;
+        const i2 = y*w + x + 1;
+        bits += gray[i1] > gray[i2] ? '1' : '0';
+      }
+    }
+    return bits;
+  }
+
+  hamming(a,b){
+    let d=0; for (let i=0;i<a.length;i++){ if (a[i]!==b[i]) d++; } return d;
+  }
+
+  // ---- Detección de enfoque (variance-like) ----
   focusScore() {
     const c = document.createElement('canvas');
     c.width = 160; c.height = 90;
@@ -190,7 +266,7 @@ export class SmartCamera {
     return variance / 100;
   }
 
-  // ---- Detección de brillo ----
+  // ---- Brillo global ----
   brightnessScore() {
     const c = document.createElement('canvas');
     c.width = 64; c.height = 36;

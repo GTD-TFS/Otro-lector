@@ -1,232 +1,265 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR DNI con Autoenfoque Inteligente (v5-6)</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>OCR DNI – consenso por verdes distintos</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
-    body {
-      margin: 0;
-      padding: 1rem;
-      font-family: system-ui, sans-serif;
-      background: #f6f7f9;
-      color: #111;
-    }
-    .app {
-      max-width: 900px;
-      margin: 0 auto;
-      background: #fff;
-      padding: 1rem;
-      border-radius: 12px;
-      box-shadow: 0 6px 30px rgba(0,0,0,.06);
-    }
-    h1 { margin-top: 0; }
-    #camContainer {
-      position: relative;
-      width: 100%;
-      aspect-ratio: 16/9;
-      max-width: 640px;
-      margin: 1rem auto;
-      border: 6px solid #ccc;
-      border-radius: 12px;
-      overflow: hidden;
-      transition: border-color 0.2s ease;
-    }
-    #camContainer.good { border-color: #22c55e; }
-    #camContainer.mid { border-color: #eab308; }
-    #camContainer.bad { border-color: #ef4444; }
-    video { width: 100%; height: 100%; object-fit: cover; }
-    #focusMsg {
-      position: absolute; bottom: 6px; left: 0; right: 0;
-      text-align: center; color: #fff;
-      background: rgba(0,0,0,0.4);
-      padding: 4px 0; font-size: .9rem;
-    }
-    button {
-      padding: 0.6rem 0.9rem;
-      border: none; border-radius: 8px;
-      font-size: 1rem; cursor: pointer;
-      background: #111; color: #fff;
-      transition: background .2s;
-    }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    button:hover:not(:disabled) { background: #333; }
-    #preview { width: 100%; max-height: 300px; object-fit: contain; margin-top: .5rem; }
-    textarea { width: 100%; min-height: 150px; margin-top: .5rem; }
-    pre {
-      background: #f7f7f7;
-      border-radius: 8px;
-      padding: .7rem;
-      overflow-x: auto;
-      white-space: pre-wrap;
-    }
-    .toolbar { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem; justify-content:center; }
-    .anchor { border:1px dashed #aaa; background:rgba(255,255,0,0.15); position:absolute; font-size:.8rem; color:#000; pointer-events:none; }
+    body { margin:0; padding:1rem; font-family:system-ui,sans-serif; background:#f6f7f9; color:#111; }
+    .app { max-width: 940px; margin:0 auto; background:#fff; padding:1rem; border-radius:12px; box-shadow:0 6px 30px rgba(0,0,0,.06); }
+    #camContainer { position:relative; width:100%; aspect-ratio:16/9; max-width:680px; margin:1rem auto;
+      border:6px solid #ccc; border-radius:12px; overflow:hidden; transition:border-color .2s; }
+    #camContainer.good { border-color:#22c55e; } #camContainer.mid { border-color:#eab308; } #camContainer.bad { border-color:#ef4444; }
+    video { width:100%; height:100%; object-fit:cover; }
+    #focusMsg { position:absolute; bottom:6px; left:0; right:0; text-align:center; color:#fff;
+      background:rgba(0,0,0,.4); padding:4px 0; font-size:.9rem; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:center; }
+    button { padding:.6rem .9rem; border:none; border-radius:8px; font-size:1rem; cursor:pointer; background:#111; color:#fff; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    #preview { width:100%; max-height:300px; object-fit:contain; margin-top:.5rem; }
+    textarea { width:100%; min-height:150px; margin-top:.5rem; }
+    pre { background:#f7f7f7; border-radius:8px; padding:.7rem; white-space:pre-wrap; overflow-x:auto; }
+    .hint { color:#666; font-size:.9rem; }
   </style>
 </head>
 <body>
-  <div class="app">
-    <h1>OCR DNI con Autoenfoque Inteligente</h1>
+<div class="app">
+  <h1>OCR DNI – consenso por “verdes” distintos</h1>
 
-    <div id="camContainer" class="bad">
-      <video id="camVideo" autoplay playsinline muted></video>
-      <div id="focusMsg">Inicializando cámara…</div>
-    </div>
-
-    <div class="toolbar">
-      <button id="toggleCam">🎥 Iniciar cámara</button>
-      <button id="manualBtn">📸 Disparar</button>
-      <button id="torchBtn">💡 Linterna</button>
-      <button id="runOCR" disabled>📖 Leer texto</button>
-      <button id="clear">🧹 Limpiar</button>
-      <label style="cursor:pointer;background:#111;color:#fff;padding:.6rem .9rem;border-radius:8px;">
-        🖼️ Buscar imagen
-        <input type="file" id="fileInput" accept="image/*" style="display:none;">
-      </label>
-    </div>
-
-    <img id="preview" alt="Captura" />
-    <textarea id="output" placeholder="Texto reconocido…"></textarea>
-
-    <h3>Campos normalizados</h3>
-    <pre id="fields"></pre>
-
-    <h3>Anclajes detectados</h3>
-    <pre id="anchors"></pre>
+  <div id="camContainer" class="bad">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <div id="focusMsg">Inicializando cámara…</div>
   </div>
 
-  <!-- OCR -->
-  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
-  <script type="module">
-    import { SmartCamera } from './camera.js';
+  <div class="toolbar">
+    <button id="toggleCam">🎥 Iniciar cámara</button>
+    <button id="manualBtn">📸 Disparo manual</button>
+    <button id="torchBtn">💡 Linterna</button>
+    <button id="autoBatch">🟢 Auto-consenso (5 distintos)</button>
+    <button id="runOCR" disabled>📖 OCR ahora</button>
+    <label style="cursor:pointer;background:#111;color:#fff;padding:.6rem .9rem;border-radius:8px;">
+      🖼️ Buscar imagen
+      <input type="file" id="fileInput" accept="image/*" style="display:none;">
+    </label>
+    <button id="clear">🧹 Limpiar</button>
+  </div>
+  <div class="hint">Consejo: mueve ligeramente el documento entre “verdes” para que el sistema recoja ángulos/luz distintos. El lote se cierra al llegar a 5 o a los 15 s.</div>
 
-    const cam = new SmartCamera({
-      videoEl: document.getElementById('camVideo'),
-      containerEl: document.getElementById('camContainer'),
-      messageEl: document.getElementById('focusMsg')
-    });
+  <img id="preview" alt="Captura"/>
+  <textarea id="output" placeholder="Texto reconocido…"></textarea>
 
-    const toggleBtn = document.getElementById('toggleCam');
-    const ocrBtn = document.getElementById('runOCR');
-    const clearBtn = document.getElementById('clear');
-    const manualBtn = document.getElementById('manualBtn');
-    const torchBtn = document.getElementById('torchBtn');
-    const fileInput = document.getElementById('fileInput');
-    const preview = document.getElementById('preview');
-    const output = document.getElementById('output');
-    const fieldsEl = document.getElementById('fields');
-    const anchorsEl = document.getElementById('anchors');
-    let currentBlob = null;
+  <h3>Campos (consenso)</h3>
+  <pre id="fields"></pre>
 
-    toggleBtn.onclick = async () => {
-      if (!cam.active) {
-        await cam.start();
-        toggleBtn.textContent = '🛑 Detener cámara';
-      } else {
-        cam.stop();
-        toggleBtn.textContent = '🎥 Iniciar cámara';
-      }
-    };
+  <h3>Texto de cada captura (debug)</h3>
+  <pre id="anchors"></pre>
+</div>
 
-    torchBtn.onclick = () => cam.toggleTorch();
-    manualBtn.onclick = () => cam.manualCapture();
+<script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+<script type="module">
+  import { SmartCamera } from './camera.js';
 
-    cam.onReadyToCapture = (blob) => {
+  const cam = new SmartCamera({
+    videoEl: document.getElementById('camVideo'),
+    containerEl: document.getElementById('camContainer'),
+    messageEl: document.getElementById('focusMsg')
+  });
+
+  const toggleBtn = document.getElementById('toggleCam');
+  const manualBtn = document.getElementById('manualBtn');
+  const torchBtn  = document.getElementById('torchBtn');
+  const autoBatchBtn = document.getElementById('autoBatch');
+  const fileInput = document.getElementById('fileInput');
+
+  const ocrBtn   = document.getElementById('runOCR');
+  const clearBtn = document.getElementById('clear');
+
+  const preview  = document.getElementById('preview');
+  const output   = document.getElementById('output');
+  const fieldsEl = document.getElementById('fields');
+  const anchorsEl= document.getElementById('anchors');
+
+  let currentBlob = null;
+  let batchBlobs  = [];
+
+  toggleBtn.onclick = async () => {
+    if (!cam.active) {
+      await cam.start();
+      toggleBtn.textContent = '🛑 Detener cámara';
+    } else {
+      cam.stop();
+      toggleBtn.textContent = '🎥 Iniciar cámara';
+    }
+  };
+
+  torchBtn.onclick = () => cam.toggleTorch();
+  manualBtn.onclick = () => cam.manualCapture();
+
+  // Auto: cuando está en verde, captura, pero ahora solo si aporta diversidad
+  cam.onReadyToCapture = (blob) => {
+    // Si estamos en modo auto-consenso, las capturas se gestionan dentro del propio módulo.
+    // Si no, tratamos la captura única y habilitamos OCR.
+    if (!cam.autoCollecting) {
       currentBlob = blob;
       preview.src = URL.createObjectURL(blob);
       ocrBtn.disabled = false;
       output.value = 'Imagen capturada ✅';
-    };
-
-    fileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      currentBlob = file;
-      preview.src = URL.createObjectURL(file);
-      ocrBtn.disabled = false;
-      output.value = 'Imagen seleccionada del dispositivo ✅';
-    });
-
-    clearBtn.onclick = () => {
-      currentBlob = null;
-      output.value = '';
-      preview.src = '';
-      fieldsEl.textContent = '';
-      anchorsEl.textContent = '';
-      ocrBtn.disabled = true;
-    };
-
-    // === OCR + parser ===
-    ocrBtn.onclick = async () => {
-      if (!currentBlob) return;
-      output.value = 'Procesando OCR…';
-      fieldsEl.textContent = '';
-      anchorsEl.textContent = '';
-
-      const worker = await Tesseract.createWorker('spa', 1, {
-        logger: m => console.log(m)
-      });
-      const { data } = await worker.recognize(currentBlob);
-      await worker.terminate();
-
-      const text = data.text.trim();
-      output.value = text;
-
-      const parsed = parseDNI(text);
-      fieldsEl.textContent = JSON.stringify(parsed, null, 2);
-
-      const anchorList = data.lines.map((l, i) =>
-        `${String(i+1).padStart(2,'0')} | y≈${Math.round(l.bbox.y0)} | ${l.text}`
-      ).join("\n");
-      anchorsEl.textContent = anchorList;
-    };
-
-    // === Parser básico DNI ===
-    function parseDNI(text) {
-      const norm = s => (s||'').normalize('NFD')
-        .replace(/\p{Diacritic}/gu,'')
-        .replace(/[^\p{L}\p{N}\s]/gu,' ')
-        .replace(/\s+/g,' ')
-        .trim()
-        .toUpperCase();
-
-      const out = {
-        "Nombre": "",
-        "Apellidos": "",
-        "Tipo documento": "DNI",
-        "Nº Documento": "",
-        "Sexo": "",
-        "Nacionalidad": "",
-        "Fecha nacimiento": "",
-      };
-
-      const clean = norm(text);
-
-      // Nº Documento
-      const mDni = clean.match(/\b\d{8}[A-Z]\b/);
-      if (mDni) out["Nº Documento"] = mDni[0];
-
-      // Nombre / Apellidos
-      const lines = clean.split(/\n| {2,}/);
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        if (l.includes("APELLID")) out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
-        if (l.includes("NOMBRE")) out["Nombre"] = (lines[i+1]||"").split(' ').slice(0,2).join(' ');
-      }
-
-      // Sexo / Nacionalidad / Fecha
-      const mLine = clean.match(/\b[MF]\b.*?\b[A-Z]{3}\b.*?\b\d{1,2} \d{1,2} \d{4}\b/);
-      if (mLine) {
-        const parts = mLine[0].split(/\s+/);
-        out["Sexo"] = parts[0];
-        out["Nacionalidad"] = parts.find(p => p.length===3 && /[A-Z]{3}/.test(p)) || "";
-        const fecha = mLine[0].match(/\d{1,2} \d{1,2} \d{4}/);
-        if (fecha) out["Fecha nacimiento"] = fecha[0].replace(/\s/g,'/');
-      }
-
-      return out;
     }
-  </script>
+  };
+
+  // Modo lote por “verdes distintos”
+  autoBatchBtn.onclick = () => {
+    if (!cam.active) return alert('Inicia la cámara primero');
+    batchBlobs = [];
+    output.value = '⏳ Recolectando 5 capturas distintas… muévete un poco entre verdes';
+    cam.startAutoConsensus(5, 15000);
+  };
+
+  cam.onAutoBatchReady = (blobs) => {
+    batchBlobs = blobs;
+    if (batchBlobs.length) {
+      const last = batchBlobs[batchBlobs.length-1];
+      preview.src = URL.createObjectURL(last);
+      ocrBtn.disabled = true; ocrBtn.disabled = false;
+      output.value = `📦 Lote listo (${batchBlobs.length} capturas)`;
+    } else {
+      output.value = '⚠️ No se logró reunir capturas suficientemente distintas.';
+    }
+  };
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    batchBlobs = [];
+    currentBlob = file;
+    preview.src = URL.createObjectURL(file);
+    ocrBtn.disabled = false;
+    output.value = 'Imagen seleccionada del dispositivo ✅';
+  });
+
+  clearBtn.onclick = () => {
+    currentBlob = null;
+    batchBlobs = [];
+    preview.src = '';
+    output.value = '';
+    fieldsEl.textContent = '';
+    anchorsEl.textContent = '';
+    ocrBtn.disabled = true;
+  };
+
+  // ============== OCR + CONSENSO ==============
+  ocrBtn.onclick = async () => {
+    const blobs = batchBlobs.length ? batchBlobs : (currentBlob ? [currentBlob] : []);
+    if (!blobs.length) return;
+
+    output.value = `Procesando OCR (${blobs.length} imágenes)…`;
+    fieldsEl.textContent = '';
+    anchorsEl.textContent = '';
+
+    const worker = await Tesseract.createWorker('spa', 1, { logger: m => console.log(m) });
+    const texts = [];
+    const parsedList = [];
+
+    for (let i = 0; i < blobs.length; i++) {
+      const { data } = await worker.recognize(blobs[i]);
+      const txt = (data.text || '').trim();
+      texts.push(txt);
+      parsedList.push(parseDNI(txt));
+    }
+    await worker.terminate();
+
+    // Output: texto de cada captura (debug)
+    anchorsEl.textContent = texts.map((t,i)=>`--- Captura ${i+1} ---\n${t}`).join('\n\n');
+    output.value = texts[texts.length-1];
+
+    const fused = fuseParsed(parsedList);
+    fieldsEl.textContent = JSON.stringify(fused, null, 2);
+  };
+
+  // ============== Parser DNI (simple) ==============
+  function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
+    .replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
+
+  function parseDNI(text) {
+    const clean = norm(text);
+    const out = {
+      "Nombre": "",
+      "Apellidos": "",
+      "Tipo documento": "DNI",
+      "Nº Documento": "",
+      "Sexo": "",
+      "Nacionalidad": "",
+      "Fecha nacimiento": "",
+    };
+
+    // DNI/NIF
+    const mDni = clean.match(/\b\d{8}[A-Z]\b/);
+    if (mDni) out["Nº Documento"] = mDni[0];
+
+    // Nombre / Apellidos por etiquetas
+    const lines = clean.split(/\n| {2,}/);
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.includes("APELLID")) out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,4).join(' ');
+      if (l.includes("NOMBRE")) out["Nombre"] = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
+    }
+
+    // Sexo / Nacionalidad / Fecha
+    const mLine = clean.match(/\b[MF]\b.*?\b[A-Z]{3}\b.*?\b\d{1,2} \d{1,2} \d{4}\b/);
+    if (mLine) {
+      const parts = mLine[0].split(/\s+/);
+      out["Sexo"] = parts[0];
+      out["Nacionalidad"] = parts.find(p => p.length===3 && /[A-Z]{3}/.test(p)) || "";
+      const fecha = mLine[0].match(/\d{1,2} \d{1,2} \d{4}/);
+      if (fecha) out["Fecha nacimiento"] = fecha[0].replace(/\s/g,'/');
+    }
+
+    return out;
+  }
+
+  // ============== Fusión por consenso ==============
+  function fuseParsed(list){
+    if (!list.length) return {};
+    const keys = Object.keys(list[0]);
+    const res = {};
+    for (const k of keys){
+      const vals = list.map(o => (o[k]||'').trim()).filter(Boolean);
+      if (!vals.length) { res[k] = ''; continue; }
+      const best = majority(vals);
+      res[k] = best || centroidString(vals);
+    }
+    return res;
+  }
+  function majority(arr){
+    const map = new Map();
+    for(const v of arr) map.set(v, (map.get(v)||0)+1);
+    let best=null, cnt=0;
+    for(const [v,c] of map.entries()){ if(c>cnt){ cnt=c; best=v; } }
+    const ties = [...map.values()].filter(c=>c===cnt).length;
+    return ties>1 ? null : best;
+  }
+  function centroidString(arr){
+    let best=null, bestScore=Infinity;
+    for (const a of arr){
+      let sum=0; for (const b of arr){ sum += levenshtein(a,b); }
+      if (sum < bestScore){ bestScore=sum; best=a; }
+    }
+    return best || arr[0];
+  }
+  function levenshtein(a,b){
+    const m=a.length, n=b.length;
+    const dp = Array.from({length:m+1},()=>new Array(n+1).fill(0));
+    for(let i=0;i<=m;i++) dp[i][0]=i;
+    for(let j=0;j<=n;j++) dp[0][j]=j;
+    for(let i=1;i<=m;i++){
+      for(let j=1;j<=n;j++){
+        const cost = a[i-1]===b[j-1] ? 0 : 1;
+        dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost);
+      }
+    }
+    return dp[m][n];
+  }
+</script>
 </body>
 </html>

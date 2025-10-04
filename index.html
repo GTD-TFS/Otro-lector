@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR DNI - con estructura</title>
+  <title>OCR DNI – lector robusto</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; padding: 1rem; background: #f6f7f9; color: #111; }
-    .app { max-width: 760px; margin: 0 auto; background: #fff; border-radius: 12px;
+    .app { max-width: 860px; margin: 0 auto; background: #fff; border-radius: 12px;
            padding: 1rem; box-shadow: 0 6px 30px rgba(0,0,0,.06); }
     h1 { font-size: 1.25rem; margin-bottom: 1rem; }
     .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .75rem; }
@@ -19,13 +19,14 @@
     button.primary { color: #fff; border: none; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
     .preview { width: 100%; max-height: 320px; object-fit: contain; border-radius: 10px; background: #f0f2f5; }
-    textarea { width: 100%; min-height: 180px; resize: vertical; }
-    pre { background: #f7f7f7; border-radius: 8px; padding: .7rem; overflow-x: auto; }
+    textarea { width: 100%; min-height: 200px; resize: vertical; }
+    pre { background: #f7f7f7; border-radius: 8px; padding: .7rem; overflow-x: auto; white-space: pre-wrap; }
+    .muted { color:#6b7280; font-size:.9rem; }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>OCR DNI – anverso + estructura</h1>
+    <h1>OCR DNI (anverso) – lector robusto</h1>
 
     <!-- Entrada -->
     <div class="row">
@@ -35,7 +36,7 @@
       <input id="archivoInput" type="file" accept="image/*" hidden>
     </div>
 
-    <!-- Idioma -->
+    <!-- Idioma + acciones -->
     <div class="row">
       <label for="lang">Idioma</label>
       <select id="lang">
@@ -43,23 +44,24 @@
         <option value="eng">Inglés</option>
       </select>
 
-      <!-- Botón con color distinto en esta versión -->
-      <button id="run" class="primary" type="button" style="background:#d35400;">Leer texto</button>
+      <!-- color distinto para esta versión -->
+      <button id="run" class="primary" type="button" style="background:#0ea5e9;">Leer texto</button>
       <button id="clear" type="button">Limpiar</button>
+      <span id="status" class="muted">Listo.</span>
     </div>
 
     <img id="preview" class="preview" alt="Vista previa" />
 
     <!-- Resultados -->
     <div class="row" style="flex-direction:column; align-items:stretch;">
-      <label for="output">Texto detectado y campos extraídos</label>
+      <label for="output">Texto detectado y campos</label>
       <textarea id="output" placeholder="Aquí aparecerá el texto reconocido…"></textarea>
     </div>
 
     <!-- Estructura OCR -->
     <div class="row" style="flex-direction:column; align-items:stretch;">
       <div class="row" style="justify-content:space-between; padding:0;">
-        <label>Estructura OCR (líneas y coordenadas)</label>
+        <label>🔍 Estructura OCR (ordenado de arriba a abajo)</label>
         <button id="toggleStruct" type="button">Mostrar/Ocultar</button>
       </div>
       <pre id="structure" style="display:none;"></pre>
@@ -73,14 +75,16 @@
     const fotoBtn = $('fotoBtn'), fotoInput = $('fotoInput');
     const archivoBtn = $('archivoBtn'), archivoInput = $('archivoInput');
     const runBtn = $('run'), clearBtn = $('clear');
-    const preview = $('preview'), output = $('output'), langSel = $('lang');
+    const preview = $('preview'), output = $('output'), langSel = $('lang'), statusEl = $('status');
     const toggleStructBtn = $('toggleStruct'), structure = $('structure');
+
     let currentBlob = null;
     let lastData = null;
+    let lastBlobUsed = null; // blob de la variante “ganadora” (para micro re-OCR)
 
+    // Entrada
     fotoBtn.addEventListener('click', () => fotoInput.click());
     archivoBtn.addEventListener('click', () => archivoInput.click());
-
     fotoInput.addEventListener('change', () => onPick(fotoInput.files?.[0]));
     archivoInput.addEventListener('change', () => onPick(archivoInput.files?.[0]));
 
@@ -91,13 +95,15 @@
       output.value = '';
       structure.textContent = '';
       structure.style.display = 'none';
+      status('Imagen cargada.');
     }
 
     clearBtn.addEventListener('click', () => {
-      currentBlob = null; lastData = null;
+      currentBlob = null; lastData = null; lastBlobUsed = null;
       fotoInput.value=''; archivoInput.value='';
       preview.removeAttribute('src'); output.value='';
       structure.textContent=''; structure.style.display='none';
+      status('Listo.');
     });
 
     toggleStructBtn.addEventListener('click', () => {
@@ -105,77 +111,369 @@
       structure.style.display = structure.style.display==='none' ? '' : 'none';
     });
 
-    runBtn.addEventListener('click', async () => {
-      if (!currentBlob) return alert('Selecciona o haz una foto primero.');
-      output.value = 'Reconociendo…';
+    function status(t){ statusEl.textContent = t; }
 
-      try {
-        const worker = await Tesseract.createWorker(langSel.value || 'spa', 1, {
-          workerPath: 'https://unpkg.com/tesseract.js@5.1.0/dist/worker.min.js',
-          corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js'
-        });
+    // ===================== PREPROCESADO AVANZADO =====================
+    async function loadImageBitmap(blob){ return await createImageBitmap(blob); }
 
-        await worker.setParameters({ tessedit_pageseg_mode: 6 });
-        const { data } = await worker.recognize(currentBlob);
-        lastData = data;
+    function canvasFromBitmap(bmp, w, h){
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(bmp, 0, 0, w, h);
+      return c;
+    }
 
-        const texto = data.text.trim();
-        const parsed = parseDNI(texto);
-        output.value = texto + '\n\n--- Campos ---\n' + JSON.stringify(parsed, null, 2);
+    function rotateCanvas(srcCanvas, deg){
+      if (!deg) return srcCanvas;
+      const rad = deg * Math.PI/180;
+      const s = Math.sin(rad), c = Math.cos(rad);
+      const w = srcCanvas.width, h = srcCanvas.height;
+      const W = Math.abs(w*c) + Math.abs(h*s);
+      const H = Math.abs(w*s) + Math.abs(h*c);
+      const out = document.createElement('canvas');
+      out.width = Math.ceil(W); out.height = Math.ceil(H);
+      const ctx = out.getContext('2d');
+      ctx.translate(out.width/2, out.height/2);
+      ctx.rotate(rad);
+      ctx.drawImage(srcCanvas, -w/2, -h/2);
+      return out;
+    }
 
-        renderStructure(data);
-        await worker.terminate();
-      } catch (err) {
-        output.value = 'Error: ' + err.message;
+    function grayscale(ctx, w, h){
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
+      for(let i=0;i<d.length;i+=4){
+        const r=d[i], g=d[i+1], b=d[i+2];
+        const y = (r*299 + g*587 + b*114)/1000;
+        d[i]=d[i+1]=d[i+2]=y;
       }
-    });
+      ctx.putImageData(img,0,0);
+      return img;
+    }
 
-    // === Estructura OCR: agrupar palabras en líneas por Y ===
+    // Integral image para media local rápida
+    function integralImage(gray, w, h){
+      const I = new Float64Array((w+1)*(h+1));
+      for(let y=1;y<=h;y++){
+        let rowsum=0;
+        for(let x=1;x<=w;x++){
+          rowsum += gray[(y-1)*w+(x-1)];
+          I[y*(w+1)+x] = I[(y-1)*(w+1)+x] + rowsum;
+        }
+      }
+      return I;
+    }
+    function rectSum(I, w, x0,y0,x1,y1){ // [x0,x1) [y0,y1)
+      x0=Math.max(0,x0); y0=Math.max(0,y0);
+      x1=Math.min(w,x1); y1=Math.max(y0,y1);
+      const stride = w+1;
+      return I[y1*stride + x1] - I[y0*stride + x1] - I[y1*stride + x0] + I[y0*stride + x0];
+    }
+
+    function adaptiveBinarize(canvas, opts={}){
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      const img = ctx.getImageData(0,0,w,h);
+      const d = img.data;
+      const gray = new Uint8ClampedArray(w*h);
+      for(let i=0, j=0;i<d.length;i+=4, j++){
+        gray[j]=d[i]; // ya en gris
+      }
+      const I = integralImage(gray, w, h);
+      const r = opts.radius ?? 12;      // radio ventana
+      const k = opts.offset ?? 10;      // umbral dinámico
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          const x0 = x-r, y0 = y-r, x1 = x+r+1, y1 = y+r+1;
+          const area = (Math.min(x1,w)-Math.max(x0,0))*(Math.min(y1,h)-Math.max(y0,0));
+          const sum = rectSum(I, w, x0,y0,x1,y1);
+          const mean = sum/area;
+          const idx = (y*w+x)*4;
+          const v = gray[y*w+x] < (mean - k) ? 0 : 255;
+          d[idx]=d[idx+1]=d[idx+2]=v; d[idx+3]=255;
+        }
+      }
+      ctx.putImageData(img,0,0);
+      return canvas;
+    }
+
+    async function preprocessVariants(blob, scale=2.4){
+      const bmp = await loadImageBitmap(blob);
+      const base = canvasFromBitmap(bmp, Math.round(bmp.width*scale), Math.round(bmp.height*scale));
+      const ctx = base.getContext('2d');
+      grayscale(ctx, base.width, base.height);
+      // versión binarizada
+      const bin = adaptiveBinarize(base.cloneNode(true).getContext ? (()=>{const c=document.createElement('canvas'); c.width=base.width; c.height=base.height; c.getContext('2d').drawImage(base,0,0); return c;})() : base, {radius:12, offset:10});
+
+      const angles = [-2, 0, +2];
+      const blobs = [];
+      for(const deg of angles){
+        const rot = rotateCanvas(bin, deg);
+        const b = await new Promise(res => rot.toBlob(res, 'image/png', 1));
+        blobs.push({ blob: b, label: `bin${deg >= 0 ? '+'+deg : deg}` });
+      }
+      return blobs;
+    }
+
+    // ===================== OCR MULTI-PASS =====================
+    function N(s){
+      return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
+        .toUpperCase().replace(/\s+/g,' ').trim();
+    }
+
+    function scoreOCR(data){
+      const t = N(data.text||'');
+      let score = 0;
+      // presencia de anclas
+      ['APELL','NOMBR','SEXO','NACI','DNI','NACIONALIDAD'].forEach(k=>{ if(t.includes(k)) score += 8; });
+      // densidad de letras/dígitos legibles
+      const good = (t.match(/[A-Z0-9]/g)||[]).length;
+      const bad  = (t.match(/[_=~^`´••·¬]/g)||[]).length;
+      score += good*0.02 - bad*0.5;
+      // fecha y NIF
+      if (/\b\d{1,2}[\/\-. ]\d{1,2}[\/\-. ]\d{2,4}\b/.test(t)) score += 6;
+      if (/\b\d{8}[ -]?[A-Z]\b/.test(t)) score += 10;
+      return score;
+    }
+
+    async function recognizeBest(worker, blobVariants, lang){
+      let best = null;
+      for(const v of blobVariants){
+        status(`Reconociendo (${v.label})…`);
+        await worker.setParameters({
+          tessedit_pageseg_mode: 6,
+          // whitelist amplia (letras acentuadas + dígitos + separadores)
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÜÑabcdefghijklmnopqrstuvwxyzáéíóúüñ0123456789/-. '
+        });
+        const { data } = await worker.recognize(v.blob);
+        const sc = scoreOCR(data);
+        if (!best || sc > best.score){ best = { score: sc, data, blob: v.blob, label: v.label }; }
+      }
+      return best;
+    }
+
+    // ===================== ESTRUCTURA OCR (vertical) =====================
     function renderStructure(data){
-      const words = (data.words||[]).filter(w=>w.text.trim());
+      const words = (data.words||[]).filter(w=> (w.text||'').trim());
       words.sort((a,b)=>a.bbox.y0-b.bbox.y0 || a.bbox.x0-b.bbox.x0);
-
       const tolY=8, rows=[];
       for (const w of words){
         const y=w.bbox.y0;
         const r=rows.find(rr=>Math.abs(rr.y-y)<=tolY);
-        if(r){r.items.push(w); r.y=(r.y+y)/2;}
-        else rows.push({y,items:[w]});
+        if(r){ r.items.push(w); r.y=(r.y+y)/2; }
+        else { rows.push({ y, items:[w] }); }
       }
       for(const r of rows) r.items.sort((a,b)=>a.bbox.x0-b.bbox.x0);
-
       const lines=rows.sort((a,b)=>a.y-b.y)
-        .map((r,i)=>`${String(i+1).padStart(2,'0')} | y≈${Math.round(r.y)} | ${r.items.map(it=>it.text).join(' ')}`);
-      structure.textContent = lines.join('\\n');
+        .map((r,i)=>`#${String(i+1).padStart(2,'0')}\ny≈${Math.round(r.y)}\n${r.items.map(it=>it.text).join(' ')}\n────────────────────`);
+      structure.textContent = lines.join('\n');
     }
 
-    // === Parser básico de DNI ===
-    function norm(s){
-      return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
-        .replace(/[^\p{L}\p{N}\n\s:/.-]/gu,' ')
-        .replace(/\s+/g,' ').trim().toUpperCase();
+    // ===================== PARSER POR ANCLAS + MICRO re-OCR =====================
+    function groupByLine(words, tolY=8){
+      const rows=[], ws=[...words].filter(w=>(w.text||'').trim()).sort((a,b)=>a.bbox.y0-b.bbox.y0 || a.bbox.x0-b.bbox.x0);
+      for(const w of ws){
+        const y=w.bbox.y0;
+        const r = rows.find(rr => Math.abs(rr.y - y) <= tolY);
+        if (r){ r.items.push(w); r.y = (r.y + y)/2; }
+        else rows.push({ y, items:[w] });
+      }
+      for(const r of rows){
+        r.items.sort((a,b)=>a.bbox.x0-b.bbox.x0);
+        r.textRaw = r.items.map(t=>t.text).join(' ').trim();
+        r.text = N(r.textRaw);
+        const xs=r.items.map(t=>t.bbox.x0), xe=r.items.map(t=>t.bbox.x1);
+        r.x0=Math.min(...xs); r.x1=Math.max(...xe); r.w=Math.max(1,r.x1-r.x0);
+        const ys=r.items.map(t=>t.bbox.y0), ye=r.items.map(t=>t.bbox.y1);
+        r.y0=Math.min(...ys); r.y1=Math.max(...ye); r.h=Math.max(1,r.y1-r.y0);
+      }
+      return rows.sort((a,b)=>a.y-b.y);
     }
-    function splitLines(raw){ return (raw||'').split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean); }
+    function overlapRatio(a, b){
+      const x0 = Math.max(a.x0, b.x0), x1 = Math.min(a.x1, b.x1);
+      const inter = Math.max(0, x1 - x0), minw = Math.max(1, Math.min(a.w, b.w));
+      return inter / minw;
+    }
+    function rowBelow(rows, anchor, maxDown=120, minOverlap=0.2){
+      const cands = rows
+        .filter(r => r.y > anchor.y && (r.y - anchor.y) <= maxDown)
+        .filter(r => overlapRatio(r, anchor) >= minOverlap)
+        .sort((a,b)=>a.y-b.y);
+      return cands[0] || null;
+    }
 
-    function parseDNI(raw){
+    function parseDNI_fromOCR(tessData){
       const out = {
-        "Nombre": "", "APELLIDOS": "", "TIPO DOCUMENTO": "DNI",
-        "NºDOCUMENTO": "", "SEXO": "", "NACIONALIDAD": "",
-        "Nombre de los Padres": "", "FECHA DE NACIMIENTO": "",
-        "LUGAR DE NACIMIENTO": "", "DOMICILIO": ""
+        "Nombre": "",
+        "APELLIDOS": "",
+        "TIPO DOCUMENTO": "",
+        "NºDOCUMENTO": "",
+        "SEXO": "",
+        "NACIONALIDAD": "",
+        "Nombre de los Padres": "",
+        "FECHA DE NACIMIENTO": "",
+        "LUGAR DE NACIMIENTO": "",
+        "DOMICILIO": ""
       };
-      const rawLines=splitLines(raw), lines=splitLines(norm(raw));
-      const nextLine=(L,i)=>L.slice(i+1).find(x=>x)||"", nextTwo=(L,i)=>L.slice(i+1).filter(x=>x).slice(0,2);
 
-      const idxAp=lines.findIndex(l=>/\\bAPELLIDOS\\b/.test(l));
-      if(idxAp>=0){const [l1,l2]=nextTwo(lines,idxAp);out["APELLIDOS"]=[l1,l2].filter(Boolean).join(' ');}
-      const idxNom=lines.findIndex(l=>/\\bNOMBRE\\b/.test(l));
-      if(idxNom>=0){const l=nextLine(rawLines,idxNom)||nextLine(lines,idxNom);out["Nombre"]=l;}
-      const mFecha=raw.match(/\\b(\\d{1,2})[\\/\\.\\-\\s](\\d{1,2})[\\/\\.\\-\\s](\\d{2,4})\\b/);
-      if(mFecha){out["FECHA DE NACIMIENTO"]=`${mFecha[1].padStart(2,'0')}/${mFecha[2].padStart(2,'0')}/${mFecha[3].length===2?'19'+mFecha[3]:mFecha[3]}`;}
-      const mDoc=norm(raw).match(/\\b\\d{8}[ -]?[A-Z]\\b/);if(mDoc) out["NºDOCUMENTO"]=mDoc[0].replace(/[ -]/g,'');
-      return out;
+      const rows = groupByLine(tessData.words||[]);
+      const has = (r,k)=> (r.text||'').includes(k);
+      const isNombreLbl    = r => has(r,'NOMBR'); // NOMBRE
+      const isApellidosLbl = r => has(r,'APELL') || has(r,'APELID');
+      const isDniLbl       = r => has(r,' DNI ');
+      const isTripleLbl    = r => has(r,'SEXO') && (has(r,'NACIM')||has(r,'NACI'));
+
+      // Nº documento (global)
+      const all = N((tessData.text||'').replace(/=/g,' '));
+      const mDoc = all.match(/\b\d{8}[ -]?[A-Z]\b/);
+      if (mDoc) out["NºDOCUMENTO"] = mDoc[0].replace(/[ -]/g,'');
+
+      if (rows.some(isDniLbl)) out["TIPO DOCUMENTO"] = "DNI";
+
+      // NOMBRE
+      const lblNom = rows.find(isNombreLbl);
+      if (lblNom){
+        const val = rowBelow(rows, lblNom, 130, 0.15);
+        if (val) out["Nombre"] = cleanName(val.textRaw);
+      }
+
+      // APELLIDOS
+      const lblAp = rows.find(isApellidosLbl);
+      if (lblAp){
+        const ap1 = rowBelow(rows, lblAp, 120, 0.15);
+        const ap2 = ap1 ? rowBelow(rows, ap1, 90, 0.15) : null;
+        const j = [ap1?.textRaw, ap2?.textRaw].filter(Boolean).map(cleanName).join(' ');
+        if (j) out["APELLIDOS"] = j;
+      } else if (lblNom){
+        // fallback: dos líneas anteriores a NOMBRE
+        const above = rows.filter(r=>r.y < lblNom.y).sort((a,b)=>b.y-a.y).slice(0,2).reverse();
+        const j = above.map(r=>cleanName(r.textRaw)).join(' ').trim();
+        if (j) out["APELLIDOS"] = j;
+      }
+
+      // SEXO / NACIONALIDAD / FECHA
+      const lblTri = rows.find(isTripleLbl);
+      if (lblTri){
+        const val = rowBelow(rows, lblTri, 140, 0.05);
+        if (val){
+          const t = N(val.textRaw).replace(/\s+/g,' ').trim();
+          const mS = t.match(/\b[MF]\b/); if (mS) out["SEXO"]=mS[0];
+          out["NACIONALIDAD"] = /\bESP\b/.test(t) ? 'ESP' : (t.match(/\b[A-Z]{2,4}\b/)||[])[0] || out["NACIONALIDAD"];
+          const mF = val.textRaw.match(/\b(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})\b/);
+          if (mF){
+            const dd=mF[1].padStart(2,'0'), mm=mF[2].padStart(2,'0'); const yy=mF[3].length===2?('19'+mF[3]):mF[3];
+            out["FECHA DE NACIMIENTO"] = `${dd}/${mm}/${yy}`;
+          }
+        }
+      }
+
+      // Limpieza final
+      if (out["NºDOCUMENTO"]) out["NºDOCUMENTO"] = out["NºDOCUMENTO"].toUpperCase().replace(/=/g,'').replace(/[^A-Z0-9]/g,'');
+      if (out["APELLIDOS"]) out["APELLIDOS"] = cleanName(out["APELLIDOS"]);
+      if (out["Nombre"]) out["Nombre"] = cleanName(out["Nombre"]);
+
+      return { out, rows };
     }
+
+    function cleanName(s){
+      return (s||'').toUpperCase()
+        .replace(/[^A-ZÁÉÍÓÚÜÑ' -]/gi,' ')
+        .replace(/\s+/g,' ')
+        .trim();
+    }
+
+    // Micro re-OCR de zonas bajo una etiqueta (para nombres/apellidos)
+    async function refineLineUnder(worker, blob, rowLabel, mult=2.8, lines=1){
+      if (!rowLabel) return '';
+      const img = await createImageBitmap(blob);
+      const W = img.width, H = img.height;
+
+      // ROI: misma banda X que la etiqueta, justo debajo, con algo de margen
+      const marginX = Math.round(rowLabel.w * 0.15);
+      const roi = {
+        x: Math.max(0, Math.round(rowLabel.x0 - marginX)),
+        y: Math.max(0, Math.round(rowLabel.y1 + 2)),
+        w: Math.min(W, Math.round((rowLabel.x1 - rowLabel.x0) + marginX*2)),
+        h: Math.min(H, Math.round(rowLabel.h * (1.6*lines)))
+      };
+
+      // pintar ROI escalado y binarizar de nuevo (agresivo)
+      const c = document.createElement('canvas');
+      c.width = Math.round(roi.w * mult); c.height = Math.round(roi.h * mult);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, roi.x, roi.y, roi.w, roi.h, 0, 0, c.width, c.height);
+      grayscale(ctx, c.width, c.height);
+      adaptiveBinarize(c, { radius: 10, offset: 8 });
+
+      const cropBlob = await new Promise(res => c.toBlob(res, 'image/png', 1));
+      await worker.setParameters({
+        tessedit_pageseg_mode: 7, // single line
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÜÑabcdefghijklmnopqrstuvwxyzáéíóúüñ -\''
+      });
+      const { data } = await worker.recognize(cropBlob);
+      return cleanName(data.text || '');
+    }
+
+    // ===================== FLUJO PRINCIPAL =====================
+    runBtn.addEventListener('click', async () => {
+      if (!currentBlob) return alert('Selecciona o haz una foto primero.');
+      output.value = 'Procesando imagen…';
+      status('Preparando variantes…');
+
+      try {
+        const lang = langSel.value || 'spa';
+        const worker = await Tesseract.createWorker(lang, 1, {
+          workerPath: 'https://unpkg.com/tesseract.js@5.1.0/dist/worker.min.js',
+          corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
+          logger: m => { if (m.status==='recognizing text' && m.progress!=null){ status(`Reconociendo… ${Math.round(m.progress*100)}%`);} }
+        });
+
+        // 1) Preprocesado + variantes (rotaciones)
+        const variants = await preprocessVariants(currentBlob, 2.4);
+
+        // 2) Reconocer mejor variante
+        const best = await recognizeBest(worker, variants, lang);
+        lastData = best.data; lastBlobUsed = best.blob;
+
+        // 3) Parseo por anclas
+        const { out, rows } = parseDNI_fromOCR(best.data);
+
+        // 4) Micro re-OCR para afinar nombre/apellidos si están flojos
+        const isWeak = s => !s || s.length < 3 || /[^A-ZÁÉÍÓÚÜÑ ' -]/i.test(s);
+        if (isWeak(out["Nombre"]) || isWeak(out["APELLIDOS"])) {
+          const rws = rows;
+          const lblAp = rws.find(r => r.text.includes('APELL') || r.text.includes('APELID'));
+          const lblNom = rws.find(r => r.text.includes('NOMBR'));
+          // Apellidos: 2 líneas bajo la etiqueta
+          if (lblAp && isWeak(out["APELLIDOS"])) {
+            const ap1 = await refineLineUnder(worker, lastBlobUsed, lblAp, 3.0, 1);
+            // para la 2ª línea tomamos una banda un poco más abajo
+            const ap1RowLike = { ...lblAp, y1: lblAp.y1 + lblAp.h + 10, h: lblAp.h };
+            const ap2 = await refineLineUnder(worker, lastBlobUsed, ap1RowLike, 3.0, 1);
+            const joined = [ap1, ap2].filter(Boolean).join(' ').trim();
+            if (joined.length >= (out["APELLIDOS"]||'').length) out["APELLIDOS"] = cleanName(joined);
+          }
+          // Nombre: 1 línea bajo la etiqueta
+          if (lblNom && isWeak(out["Nombre"])) {
+            const nom = await refineLineUnder(worker, lastBlobUsed, lblNom, 3.0, 1);
+            if (nom.length >= (out["Nombre"]||'').length) out["Nombre"] = cleanName(nom);
+          }
+        }
+
+        // 5) Mostrar resultados
+        const texto = best.data.text.trim();
+        output.value = texto + '\n\n--- Campos (DNI anverso) ---\n' + JSON.stringify(out, null, 2);
+        renderStructure(best.data);
+        status(`Completado ✔  (mejor variante: ${best.label})`);
+
+        await worker.terminate();
+      } catch (err) {
+        console.error(err);
+        status('Error');
+        output.value = 'Error: ' + (err.message || err);
+      }
+    });
   </script>
 </body>
 </html>

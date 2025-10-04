@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR DNI con autoenfoque inteligente</title>
+  <title>OCR DNI con Autoenfoque Inteligente (v5-6)</title>
   <link rel="preconnect" href="https://unpkg.com">
   <style>
     body {
@@ -25,8 +25,8 @@
     #camContainer {
       position: relative;
       width: 100%;
-      aspect-ratio: 4/3;
-      max-width: 480px;
+      aspect-ratio: 16/9;
+      max-width: 640px;
       margin: 1rem auto;
       border: 6px solid #ccc;
       border-radius: 12px;
@@ -48,8 +48,10 @@
       border: none; border-radius: 8px;
       font-size: 1rem; cursor: pointer;
       background: #111; color: #fff;
+      transition: background .2s;
     }
     button:disabled { opacity: .5; cursor: not-allowed; }
+    button:hover:not(:disabled) { background: #333; }
     #preview { width: 100%; max-height: 300px; object-fit: contain; margin-top: .5rem; }
     textarea { width: 100%; min-height: 150px; margin-top: .5rem; }
     pre {
@@ -59,21 +61,29 @@
       overflow-x: auto;
       white-space: pre-wrap;
     }
+    .toolbar { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem; justify-content:center; }
+    .anchor { border:1px dashed #aaa; background:rgba(255,255,0,0.15); position:absolute; font-size:.8rem; color:#000; pointer-events:none; }
   </style>
 </head>
 <body>
   <div class="app">
-    <h1>OCR DNI con autoenfoque inteligente</h1>
+    <h1>OCR DNI con Autoenfoque Inteligente</h1>
 
     <div id="camContainer" class="bad">
       <video id="camVideo" autoplay playsinline muted></video>
       <div id="focusMsg">Inicializando cámara…</div>
     </div>
 
-    <div style="display:flex;gap:.5rem;">
+    <div class="toolbar">
       <button id="toggleCam">🎥 Iniciar cámara</button>
+      <button id="manualBtn">📸 Disparar</button>
+      <button id="torchBtn">💡 Linterna</button>
       <button id="runOCR" disabled>📖 Leer texto</button>
       <button id="clear">🧹 Limpiar</button>
+      <label style="cursor:pointer;background:#111;color:#fff;padding:.6rem .9rem;border-radius:8px;">
+        🖼️ Buscar imagen
+        <input type="file" id="fileInput" accept="image/*" style="display:none;">
+      </label>
     </div>
 
     <img id="preview" alt="Captura" />
@@ -81,12 +91,16 @@
 
     <h3>Campos normalizados</h3>
     <pre id="fields"></pre>
+
+    <h3>Anclajes detectados</h3>
+    <pre id="anchors"></pre>
   </div>
 
   <!-- OCR -->
   <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
   <script type="module">
     import { SmartCamera } from './camera.js';
+
     const cam = new SmartCamera({
       videoEl: document.getElementById('camVideo'),
       containerEl: document.getElementById('camContainer'),
@@ -96,9 +110,13 @@
     const toggleBtn = document.getElementById('toggleCam');
     const ocrBtn = document.getElementById('runOCR');
     const clearBtn = document.getElementById('clear');
+    const manualBtn = document.getElementById('manualBtn');
+    const torchBtn = document.getElementById('torchBtn');
+    const fileInput = document.getElementById('fileInput');
     const preview = document.getElementById('preview');
     const output = document.getElementById('output');
     const fieldsEl = document.getElementById('fields');
+    const anchorsEl = document.getElementById('anchors');
     let currentBlob = null;
 
     toggleBtn.onclick = async () => {
@@ -111,18 +129,31 @@
       }
     };
 
+    torchBtn.onclick = () => cam.toggleTorch();
+    manualBtn.onclick = () => cam.manualCapture();
+
     cam.onReadyToCapture = (blob) => {
       currentBlob = blob;
       preview.src = URL.createObjectURL(blob);
       ocrBtn.disabled = false;
-      output.value = 'Imagen capturada automáticamente ✅';
+      output.value = 'Imagen capturada ✅';
     };
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      currentBlob = file;
+      preview.src = URL.createObjectURL(file);
+      ocrBtn.disabled = false;
+      output.value = 'Imagen seleccionada del dispositivo ✅';
+    });
 
     clearBtn.onclick = () => {
       currentBlob = null;
       output.value = '';
       preview.src = '';
       fieldsEl.textContent = '';
+      anchorsEl.textContent = '';
       ocrBtn.disabled = true;
     };
 
@@ -131,15 +162,24 @@
       if (!currentBlob) return;
       output.value = 'Procesando OCR…';
       fieldsEl.textContent = '';
+      anchorsEl.textContent = '';
+
       const worker = await Tesseract.createWorker('spa', 1, {
         logger: m => console.log(m)
       });
       const { data } = await worker.recognize(currentBlob);
       await worker.terminate();
+
       const text = data.text.trim();
       output.value = text;
+
       const parsed = parseDNI(text);
       fieldsEl.textContent = JSON.stringify(parsed, null, 2);
+
+      const anchorList = data.lines.map((l, i) =>
+        `${String(i+1).padStart(2,'0')} | y≈${Math.round(l.bbox.y0)} | ${l.text}`
+      ).join("\n");
+      anchorsEl.textContent = anchorList;
     };
 
     // === Parser básico DNI ===
@@ -171,12 +211,8 @@
       const lines = clean.split(/\n| {2,}/);
       for (let i = 0; i < lines.length; i++) {
         const l = lines[i];
-        if (l.includes("APELLID")) {
-          out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
-        }
-        if (l.includes("NOMBRE")) {
-          out["Nombre"] = (lines[i+1]||"").split(' ').slice(0,2).join(' ');
-        }
+        if (l.includes("APELLID")) out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
+        if (l.includes("NOMBRE")) out["Nombre"] = (lines[i+1]||"").split(' ').slice(0,2).join(' ');
       }
 
       // Sexo / Nacionalidad / Fecha

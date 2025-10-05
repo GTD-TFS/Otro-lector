@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>OCR DNI — 2 capturas manuales (B/N, consenso)</title>
+<title>OCR DNI — 2 capturas manuales horizontales</title>
 <link rel="preconnect" href="https://unpkg.com">
 <style>
   :root { --bg:#f6f7f9; --fg:#111; --card:#fff; }
@@ -30,7 +30,7 @@
 <body>
 <div class="app">
   <div class="card">
-    <h1>OCR DNI — 2 capturas manuales (B/N)</h1>
+    <h1>OCR DNI — 2 capturas manuales (B/N, horizontal)</h1>
 
     <div id="stageWrap" class="bad">
       <canvas id="stage"></canvas>
@@ -51,7 +51,7 @@
       <button id="ocr" disabled>📖 Leer OCR</button>
     </div>
 
-    <h3>Texto (si 2 capturas → consenso)</h3>
+    <h3>Texto</h3>
     <textarea id="out" placeholder="Aquí aparecerá el texto…"></textarea>
 
     <h3>Campos (normalizados)</h3>
@@ -78,25 +78,42 @@
 
   // Estado
   let video = document.createElement('video'); video.autoplay=true; video.muted=true; video.playsInline=true;
-  let stream = null;
-  let running = false;         // loop activo
-  let lastImage = null;        // última imagen cargada (para redibujar al cambiar sliders)
-  let sources = [];            // blobs PNG (B/N) listos para OCR (máx. 2)
+  let stream = null, running = false;
+  let lastImage = null;          // última imagen cargada para re-render con sliders
+  let sources = [];              // blobs PNG B/N (máx. 2)
+  let shootInProgress = false;   // antirrebote
 
-  // Canvas fijo 16:9 grande para OCR
+  // Canvas 16:9 grande
   function initCanvas(){ stage.width = 1600; stage.height = 900; }
   initCanvas(); window.addEventListener('resize', initCanvas);
 
   function setCounter(){
     counter.textContent = `${sources.length} / 2 capturas`;
-    ocrBtn.disabled = sources.length === 0; // permitir con 1 o 2
+    ocrBtn.disabled = sources.length === 0;
   }
 
-  // ====== Procesado común (lo que ves es lo que guardas) ======
-  function drawBW(img){
-    // 1) calcular recorte cover a 16:9
-    const sw = img.videoWidth || img.width;
-    const sh = img.videoHeight || img.height;
+  // ---- Dibujado SIEMPRE HORIZONTAL: rotar si el sensor viene vertical ----
+  function drawBWHorizontal(source){
+    // 1) Normalizar a horizontal (si alto>ancho, rotamos 90º)
+    const sw0 = source.videoWidth || source.width;
+    const sh0 = source.videoHeight || source.height;
+
+    const srcCanvas = document.createElement('canvas');
+    const sctx = srcCanvas.getContext('2d');
+
+    if (sh0 > sw0) {
+      // rotamos a paisaje
+      srcCanvas.width = sh0; srcCanvas.height = sw0;
+      sctx.translate(srcCanvas.width/2, srcCanvas.height/2);
+      sctx.rotate(Math.PI/2);
+      sctx.drawImage(source, -sw0/2, -sh0/2);
+    } else {
+      srcCanvas.width = sw0; srcCanvas.height = sh0;
+      sctx.drawImage(source, 0, 0);
+    }
+
+    // 2) Recorte cover a 16:9
+    const sw = srcCanvas.width, sh = srcCanvas.height;
     const targetRatio = stage.width / stage.height;
     const srcRatio = sw / sh;
     let sx, sy, cw, ch;
@@ -107,23 +124,24 @@
       cw = sw; ch = Math.round(sw / targetRatio);
       sx = 0; sy = Math.round((sh - ch)/2);
     }
-    ctx.clearRect(0,0,stage.width,stage.height);
-    ctx.drawImage(img, sx, sy, cw, ch, 0, 0, stage.width, stage.height);
 
-    // 2) B/N + contraste/brillo
+    ctx.clearRect(0,0,stage.width,stage.height);
+    ctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, stage.width, stage.height);
+
+    // 3) B/N + contraste/brillo (lo que ves = lo que se guarda)
     const data = ctx.getImageData(0,0,stage.width,stage.height);
     const d = data.data;
     const c = parseFloat(contrast.value);
     const b = parseFloat(brightness.value);
     for (let i=0;i<d.length;i+=4){
       let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-      g = g * c * b; g = g<0?0:g>255?255:g;
+      g = g * c * b; if (g<0) g=0; if (g>255) g=255;
       d[i]=d[i+1]=d[i+2]=g; d[i+3]=255;
     }
     ctx.putImageData(data,0,0);
   }
 
-  // ====== Calidad (enfoque/brillo) — nivel 5 ======
+  // ---- Calidad (nivel 5) ----
   function focusScore(){
     const c = document.createElement('canvas');
     c.width = 160; c.height = 90;
@@ -132,12 +150,12 @@
     const d = x.getImageData(0,0,c.width,c.height).data;
     const gray = new Float32Array(c.width*c.height);
     for (let i=0,j=0;i<d.length;i+=4,j++) gray[j]=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-    let mean=0; for (const g of gray) mean+=g; mean/=gray.length;
-    let variance=0; for (const g of gray) variance += (g-mean)**2; variance/=gray.length;
+    let mean=0; for(const g of gray) mean+=g; mean/=gray.length;
+    let variance=0; for(const g of gray) variance+=(g-mean)**2; variance/=gray.length;
     return variance/100;
   }
   function brightnessScore(){
-    const c=document.createElement('canvas'); c.width=64;c.height=36;
+    const c=document.createElement('canvas'); c.width=64; c.height=36;
     const x=c.getContext('2d'); x.drawImage(video,0,0,c.width,c.height);
     const d=x.getImageData(0,0,c.width,c.height).data; let sum=0,n=d.length/4;
     for (let i=0;i<d.length;i+=4) sum+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
@@ -149,22 +167,22 @@
     if (f>35 && br>35 && br<230) state='good';
     else if (f>20 && br>25 && br<245) state='mid';
     stageWrap.className = state;
-    if (state==='good') statusEl.textContent='✅ Buen enfoque y luz — captura cuando quieras';
-    else if (state==='mid') statusEl.textContent='🟡 Falta un poco de nitidez o luz';
+    if (state==='good') statusEl.textContent='✅ Enfocado y buena luz';
+    else if (state==='mid') statusEl.textContent='🟡 Ajusta un poco (enfoque/luz)';
     else statusEl.textContent='🔴 Borroso o con reflejos';
   }
 
-  // ====== Cámara en vivo ======
+  // ---- Cámara ----
   async function startCamera(){
     if (stream) return;
     try{
       stream = await navigator.mediaDevices.getUserMedia({
-        video:{ facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}, aspectRatio:{ideal:1.777} }
+        video:{ facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720} }
       });
       video.srcObject = stream;
       await video.play();
       running = true;
-      statusEl.textContent='En vivo (B/N) — toma 2 capturas manuales';
+      statusEl.textContent='Vista previa B/N (horizontal). Captura hasta 2 imágenes.';
       loop();
     }catch(e){ console.error(e); statusEl.textContent='❌ No se pudo iniciar la cámara'; }
   }
@@ -174,31 +192,38 @@
   }
   function loop(){
     if (!running) return;
-    drawBW(video);
+    drawBWHorizontal(video);
     updateQuality();
     requestAnimationFrame(loop);
   }
 
-  // ====== Captura desde cámara ======
+  // ---- Captura desde cámara (con antirrebote) ----
   async function captureFromCamera(){
-    if (!stream){ await startCamera(); return; }
-    // guardar "lo que ves" como PNG
-    const blob = await new Promise(res => stage.toBlob(res,'image/png',1));
+    if (shootInProgress) return;
+    shootInProgress = true; shootBtn.disabled = true;
+
+    // Guardar “lo que ves” como PNG
+    const blob = await new Promise(res => stage.toBlob(res, 'image/png', 1));
     sources.push(blob);
     setCounter();
-    if (sources.length>=2){
+
+    if (sources.length >= 2){
       stopCamera();
       statusEl.textContent='🧊 Capturas completas (2/2). Ya puedes leer OCR.';
+    } else {
+      statusEl.textContent='✅ Captura guardada (1/2). Toma otra.';
     }
+
+    shootInProgress = false; shootBtn.disabled = false;
   }
 
-  // ====== Cargar de dispositivo ======
+  // ---- Cargar desde dispositivo (usa mismo pipeline horizontal) ----
   fileInput.addEventListener('change', async e => {
     const f = e.target.files?.[0]; if (!f) return;
     stopCamera();
     const img = await createImageBitmap(f);
     lastImage = img;
-    drawBW(img);
+    drawBWHorizontal(img);
     const blob = await new Promise(res => stage.toBlob(res,'image/png',1));
     sources.push(blob);
     setCounter();
@@ -206,16 +231,15 @@
     fileInput.value = '';
   });
 
-  // ====== OCR ======
+  // ---- Controles ----
   shootBtn.addEventListener('click', async () => {
-    // si no hay cámara → iniciar; si hay → capturar
     if (!stream) await startCamera();
     else await captureFromCamera();
   });
+  contrast.addEventListener('input', () => { if (running) drawBWHorizontal(video); else if (lastImage) drawBWHorizontal(lastImage); });
+  brightness.addEventListener('input', () => { if (running) drawBWHorizontal(video); else if (lastImage) drawBWHorizontal(lastImage); });
 
-  contrast.addEventListener('input', () => { if (running) drawBW(video); else if (lastImage) drawBW(lastImage); });
-  brightness.addEventListener('input', () => { if (running) drawBW(video); else if (lastImage) drawBW(lastImage); });
-
+  // ---- OCR ----
   ocrBtn.addEventListener('click', async () => {
     if (!sources.length) return;
     out.value = `Procesando OCR (${sources.length} imagen${sources.length>1?'es':''})…`;
@@ -230,13 +254,12 @@
     }
     await worker.terminate();
 
-    // Si hay 2 → consenso por tokens
     out.value = (sources.length===2) ? fuseText(texts) : texts[0];
     const fused = (sources.length===2) ? fuseParsed(parsed) : parsed[0];
     fieldsEl.textContent = JSON.stringify(fused, null, 2);
   });
 
-  // ====== Parser y consenso ======
+  // ===== Parser y consenso (igual que antes) =====
   function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
   function parseDNI(text){
     const clean = norm(text);

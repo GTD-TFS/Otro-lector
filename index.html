@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>OCR DNI – capturas distintas + consenso</title>
+<title>OCR DNI – auto-consenso (contador 5/5)</title>
 <link rel="preconnect" href="https://unpkg.com">
 <style>
   body{margin:0;padding:1rem;font-family:system-ui,sans-serif;background:#f6f7f9;color:#111}
@@ -11,11 +11,12 @@
   #camContainer{position:relative;width:100%;aspect-ratio:16/9;max-width:680px;margin:1rem auto;border:6px solid #ccc;border-radius:12px;overflow:hidden;transition:border-color .2s}
   #camContainer.good{border-color:#22c55e}#camContainer.mid{border-color:#eab308}#camContainer.bad{border-color:#ef4444}
   video{width:100%;height:100%;object-fit:cover}
+  #focusBar{position:absolute;top:6px;left:8px;background:rgba(0,0,0,.45);color:#fff;padding:3px 8px;border-radius:999px;font-size:.85rem}
   #focusMsg{position:absolute;bottom:6px;left:0;right:0;text-align:center;color:#fff;background:rgba(0,0,0,.4);padding:4px 0;font-size:.9rem}
-  .toolbar{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center}
+  .toolbar{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin-top:.5rem}
   button{padding:.6rem .9rem;border:none;border-radius:8px;font-size:1rem;cursor:pointer;background:#111;color:#fff}
   button:disabled{opacity:.5;cursor:not-allowed}
-  #preview{width:100%;max-height:300px;object-fit:contain;margin-top:.5rem}
+  #preview{width:100%;aspect-ratio:16/9;object-fit:contain;margin-top:.5rem}
   textarea{width:100%;min-height:150px;margin-top:.5rem}
   pre{background:#f7f7f7;border-radius:8px;padding:.7rem;white-space:pre-wrap;overflow-x:auto}
   .hint{color:#666;font-size:.9rem}
@@ -23,10 +24,11 @@
 </head>
 <body>
 <div class="app">
-  <h1>OCR DNI – capturas distintas + consenso</h1>
+  <h1>OCR DNI – auto-consenso con contador</h1>
 
   <div id="camContainer" class="bad">
     <video id="camVideo" autoplay playsinline muted></video>
+    <div id="focusBar">📦 0/5</div>
     <div id="focusMsg">Inicializando cámara…</div>
   </div>
 
@@ -42,7 +44,8 @@
     </label>
     <button id="clear">🧹 Limpiar</button>
   </div>
-  <div class="hint">El recorte es 16:9 horizontal. En “Auto-consenso” captura solo cuando el verde es distinto; al llegar a 5 o a los 15 s se procesa solo.</div>
+
+  <div class="hint">El visor y la captura son 16:9 horizontales. En “Auto-consenso” el contador sube solo (0/5 → 5/5) y al terminar se ejecuta el OCR automáticamente.</div>
 
   <img id="preview" alt="Captura"/>
   <textarea id="output" placeholder="Texto reconocido…"></textarea>
@@ -56,207 +59,194 @@
 
 <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script type="module">
-import { SmartCamera } from './camera.js';
+  import { SmartCamera } from './camera.js';
 
-const cam = new SmartCamera({
-  videoEl: document.getElementById('camVideo'),
-  containerEl: document.getElementById('camContainer'),
-  messageEl: document.getElementById('focusMsg')
-});
+  const cam = new SmartCamera({
+    videoEl: document.getElementById('camVideo'),
+    containerEl: document.getElementById('camContainer'),
+    messageEl: document.getElementById('focusMsg'),
+    progressEl: document.getElementById('focusBar')
+  });
 
-const toggleBtn = document.getElementById('toggleCam');
-const manualBtn = document.getElementById('manualBtn');
-const torchBtn  = document.getElementById('torchBtn');
-const autoBtn   = document.getElementById('autoBatch');
-const fileInput = document.getElementById('fileInput');
-const ocrBtn    = document.getElementById('runOCR');
-const clearBtn  = document.getElementById('clear');
+  const toggleBtn = document.getElementById('toggleCam');
+  const manualBtn = document.getElementById('manualBtn');
+  const torchBtn  = document.getElementById('torchBtn');
+  const autoBtn   = document.getElementById('autoBatch');
+  const fileInput = document.getElementById('fileInput');
+  const ocrBtn    = document.getElementById('runOCR');
+  const clearBtn  = document.getElementById('clear');
 
-const preview   = document.getElementById('preview');
-const output    = document.getElementById('output');
-const fieldsEl  = document.getElementById('fields');
-const anchorsEl = document.getElementById('anchors');
+  const preview   = document.getElementById('preview');
+  const output    = document.getElementById('output');
+  const fieldsEl  = document.getElementById('fields');
+  const anchorsEl = document.getElementById('anchors');
 
-let currentBlob = null;
-let batchBlobs  = [];
+  let currentBlob = null;
+  let batchBlobs  = [];
 
-toggleBtn.onclick = async () => {
-  if (!cam.active) { await cam.start(); toggleBtn.textContent='🛑 Detener cámara'; }
-  else { cam.stop(); toggleBtn.textContent='🎥 Iniciar cámara'; }
-};
-manualBtn.onclick = () => cam.manualCapture();
-torchBtn.onclick  = () => cam.toggleTorch();
+  toggleBtn.onclick = async () => {
+    if (!cam.active) { await cam.start(); toggleBtn.textContent='🛑 Detener cámara'; }
+    else { cam.stop(); toggleBtn.textContent='🎥 Iniciar cámara'; }
+  };
+  manualBtn.onclick = () => cam.manualCapture();
+  torchBtn.onclick  = () => cam.toggleTorch();
 
-cam.onReadyToCapture = (blob) => {
-  if (!cam.autoCollecting) {
-    currentBlob = blob;
-    preview.src = URL.createObjectURL(blob);
+  cam.onReadyToCapture = (blob) => {
+    if (!cam.autoCollecting) {
+      currentBlob = blob;
+      preview.src = URL.createObjectURL(blob);
+      ocrBtn.disabled = false;
+      output.value = 'Imagen capturada ✅';
+    }
+  };
+
+  autoBtn.onclick = () => {
+    if (!cam.active) return alert('Inicia la cámara primero');
+    batchBlobs = [];
+    output.value = '⏳ Recolectando capturas distintas…';
+    cam.startAutoConsensus(5, 15000);
+  };
+
+  cam.onAutoBatchReady = (blobs) => {
+    batchBlobs = blobs;
+    if (batchBlobs.length) {
+      const last = batchBlobs[batchBlobs.length-1];
+      preview.src = URL.createObjectURL(last);
+      ocrBtn.disabled = false;
+      output.value = `📦 Lote listo (${batchBlobs.length}) → ejecutando OCR…`;
+      runOCR(); // auto-OCR al terminar
+    } else {
+      output.value = '⚠️ No se reunió diversidad suficiente (intenta mover ligeramente el documento).';
+    }
+  };
+
+  fileInput.addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    batchBlobs = []; currentBlob = file;
+    preview.src = URL.createObjectURL(file);
     ocrBtn.disabled = false;
-    output.value = 'Imagen capturada ✅';
+    output.value = 'Imagen del dispositivo ✅';
+  });
+
+  clearBtn.onclick = () => {
+    currentBlob = null; batchBlobs = [];
+    preview.src = ''; output.value = '';
+    fieldsEl.textContent = ''; anchorsEl.textContent = '';
+    ocrBtn.disabled = true;
+  };
+
+  // ================= OCR =================
+  async function runOCR(){
+    const blobs = batchBlobs.length ? batchBlobs : (currentBlob?[currentBlob]:[]);
+    if (!blobs.length) return;
+
+    output.value = `Procesando OCR (${blobs.length} imagen${blobs.length>1?'es':''})…`;
+    fieldsEl.textContent = ''; anchorsEl.textContent = '';
+
+    const worker = await Tesseract.createWorker('spa', 1, { logger: m => console.log(m) });
+    const texts = [];
+    const parsedList = [];
+
+    for (let i=0;i<blobs.length;i++){
+      const { data } = await worker.recognize(blobs[i]);
+      const txt = (data.text || '').trim();
+      texts.push(txt);
+      parsedList.push(parseDNI(txt));
+    }
+    await worker.terminate();
+
+    anchorsEl.textContent = texts.map((t,i)=>`--- Captura ${i+1} ---\n${t}`).join('\n\n');
+    output.value = texts[texts.length-1];
+
+    const fused = fuseParsed(parsedList);
+    fieldsEl.textContent = JSON.stringify(fused, null, 2);
   }
-};
+  ocrBtn.onclick = runOCR;
 
-autoBtn.onclick = () => {
-  if (!cam.active) return alert('Inicia la cámara primero');
-  batchBlobs = [];
-  output.value = '⏳ Recolectando… muévete ligeramente entre “verdes”.';
-  cam.startAutoConsensus(5, 15000);
-};
-cam.onAutoBatchReady = (blobs) => {
-  batchBlobs = blobs;
-  if (batchBlobs.length) {
-    const last = batchBlobs[batchBlobs.length-1];
-    preview.src = URL.createObjectURL(last);
-    ocrBtn.disabled = false;
-    output.value = `📦 Lote listo (${batchBlobs.length}) → OCR en curso…`;
-    // Lanzamos OCR automáticamente
-    runOCR();
-  } else {
-    output.value = '⚠️ No se reunieron capturas suficientemente distintas.';
+  // ======= Parser DNI (simple por etiquetas) =======
+  function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
+    .replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ')
+    .trim().toUpperCase(); }
+
+  function parseDNI(text) {
+    const clean = norm(text);
+    const out = {
+      "Nombre": "",
+      "Apellidos": "",
+      "Tipo documento": "DNI",
+      "Nº Documento": "",
+      "Sexo": "",
+      "Nacionalidad": "",
+      "Fecha nacimiento": "",
+    };
+
+    // DNI/NIF
+    const mDni = clean.match(/\b\d{8}[A-Z]\b/);
+    if (mDni) out["Nº Documento"] = mDni[0];
+
+    // Nombre / Apellidos por etiquetas
+    const lines = clean.split(/\n| {2,}/);
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.includes("APELLID")) out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,4).join(' ');
+      if (l.includes("NOMBRE"))  out["Nombre"]    = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
+    }
+
+    // Sexo / Nacionalidad / Fecha
+    const mLine = clean.match(/\b[MF]\b.*?\b[A-Z]{3}\b.*?\b\d{1,2} \d{1,2} \d{4}\b/);
+    if (mLine) {
+      const parts = mLine[0].split(/\s+/);
+      out["Sexo"] = parts[0];
+      out["Nacionalidad"] = parts.find(p => p.length===3 && /[A-Z]{3}/.test(p)) || "";
+      const fecha = mLine[0].match(/\d{1,2} \d{1,2} \d{4}/);
+      if (fecha) out["Fecha nacimiento"] = fecha[0].replace(/\s/g,'/');
+    }
+
+    return out;
   }
-};
 
-fileInput.addEventListener('change', e => {
-  const file = e.target.files[0]; if (!file) return;
-  batchBlobs = []; currentBlob = file;
-  preview.src = URL.createObjectURL(file);
-  ocrBtn.disabled = false;
-  output.value = 'Imagen del dispositivo ✅';
-});
-
-clearBtn.onclick = () => {
-  currentBlob = null; batchBlobs = [];
-  preview.src = ''; output.value = '';
-  fieldsEl.textContent = ''; anchorsEl.textContent = '';
-  ocrBtn.disabled = true;
-};
-
-// ================= OCR ROBUSTO =================
-async function runOCR(){
-  const blobs = batchBlobs.length ? batchBlobs : (currentBlob?[currentBlob]:[]);
-  if (!blobs.length) return;
-
-  output.value = `Procesando OCR (${blobs.length} imágenes)…`;
-  fieldsEl.textContent = ''; anchorsEl.textContent = '';
-
-  const worker = await Tesseract.createWorker('spa', 1, { logger: m => console.log(m) });
-  const texts = [];
-  const parsedList = [];
-
-  for (let i=0;i<blobs.length;i++){
-    const best = await recognizeBest(worker, blobs[i]); // ➜ preproc + rotaciones
-    texts.push(best.data.text.trim());
-    parsedList.push(parseDNI_fromOCR(best.data));       // ➜ anclas
+  // ======= Consenso de campos =======
+  function fuseParsed(list){
+    if (!list.length) return {};
+    const keys = Object.keys(list[0]);
+    const res = {};
+    for (const k of keys){
+      const vals = list.map(o => (o[k]||'').trim()).filter(Boolean);
+      if (!vals.length) { res[k] = ''; continue; }
+      const best = majority(vals);
+      res[k] = best || centroidString(vals);
+    }
+    return res;
   }
-  await worker.terminate();
-
-  anchorsEl.textContent = texts.map((t,i)=>`--- Captura ${i+1} ---\n${t}`).join('\n\n');
-  output.value = texts[texts.length-1];
-
-  const fused = fuseParsed(parsedList);
-  fieldsEl.textContent = JSON.stringify(fused, null, 2);
-}
-ocrBtn.onclick = runOCR;
-
-// ======= preproc + rotaciones + scoring =======
-function N(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toUpperCase().replace(/\s+/g,' ').trim(); }
-function scoreOCR(d){
-  const t=N(d.text||''); let s=0;
-  ['APELL','NOMBR','SEXO','NACI','DNI','NACIONALIDAD'].forEach(k=>t.includes(k)&&(s+=8));
-  const good=(t.match(/[A-Z0-9]/g)||[]).length, bad=(t.match(/[_=~^`´•·]/g)||[]).length;
-  if (/\b\d{8}[ -]?[A-Z]\b/.test(t)) s+=10; if (/\b\d{1,2}[\/.\- ]\d{1,2}[\/.\- ]\d{2,4}\b/.test(t)) s+=6;
-  return s + good*0.02 - bad*0.5;
-}
-async function recognizeBest(worker, blob){
-  // 3 variantes: original, rot -2°, +2° (ya viene en grises/contraste del camera.js)
-  const img = await createImageBitmap(blob);
-  const variants = [];
-  for (const ang of [-2,0,2]){
-    const c = document.createElement('canvas'); const rad = ang*Math.PI/180;
-    const w=img.width,h=img.height;
-    let W=w,H=h,ctx;
-    if (ang!==0){
-      const s=Math.sin(rad), c0=Math.cos(rad);
-      W=Math.abs(w*c0)+Math.abs(h*s); H=Math.abs(w*s)+Math.abs(h*c0);
-      c.width=W; c.height=H; ctx=c.getContext('2d');
-      ctx.translate(W/2,H/2); ctx.rotate(rad); ctx.drawImage(img,-w/2,-h/2);
-    } else { c.width=w; c.height=h; ctx=c.getContext('2d'); ctx.drawImage(img,0,0); }
-    const b = await new Promise(res=>c.toBlob(res,'image/png',1));
-    variants.push({blob:b,label:`rot${ang}`});
+  function majority(arr){
+    const map = new Map();
+    for(const v of arr) map.set(v, (map.get(v)||0)+1);
+    let best=null,cnt=0;
+    for(const [v,c] of map.entries()) if(c>cnt){ cnt=c; best=v; }
+    const ties=[...map.values()].filter(c=>c===cnt).length;
+    return ties>1 ? null : best;
   }
-  let best=null;
-  for(const v of variants){
-    await worker.setParameters({ tessedit_pageseg_mode:6, tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÜÑabcdefghijklmnopqrstuvwxyzáéíóúüñ0123456789/-. ' });
-    const { data } = await worker.recognize(v.blob);
-    const sc=scoreOCR(data);
-    if(!best||sc>best.score) best={score:sc,data,blob:v.blob,label:v.label};
+  function centroidString(arr){
+    let best=null, bestScore=Infinity;
+    for (const a of arr){
+      let sum=0; for (const b of arr) sum += levenshtein(a,b);
+      if (sum < bestScore){ bestScore=sum; best=a; }
+    }
+    return best || arr[0];
   }
-  return best;
-}
-
-// ======= Parser por anclas (sin coordenadas absolutas) =======
-function groupByLine(words,tolY=8){
-  const rows=[], ws=[...words].filter(w=>(w.text||'').trim()).sort((a,b)=>a.bbox.y0-b.bbox.y0||a.bbox.x0-b.bbox.x0);
-  for (const w of ws){
-    const y=w.bbox.y0; const r=rows.find(rr=>Math.abs(rr.y-y)<=tolY);
-    if(r){ r.items.push(w); r.y=(r.y+y)/2; } else rows.push({y,items:[w]});
+  function levenshtein(a,b){
+    const m=a.length,n=b.length;
+    const dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
+    for(let i=0;i<=m;i++) dp[i][0]=i;
+    for(let j=0;j<=n;j++) dp[0][j]=j;
+    for(let i=1;i<=m;i++){
+      for(let j=1;j<=n;j++){
+        const c=a[i-1]===b[j-1]?0:1;
+        dp[i][j]=Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+c);
+      }
+    }
+    return dp[m][n];
   }
-  for(const r of rows){
-    r.items.sort((a,b)=>a.bbox.x0-b.bbox.x0);
-    r.textRaw=r.items.map(t=>t.text).join(' ').trim(); r.text=N(r.textRaw);
-    const xs=r.items.map(t=>t.bbox.x0), xe=r.items.map(t=>t.bbox.x1);
-    r.x0=Math.min(...xs); r.x1=Math.max(...xe); r.w=Math.max(1,r.x1-r.x0);
-    const ys=r.items.map(t=>t.bbox.y0), ye=r.items.map(t=>t.bbox.y1);
-    r.y0=Math.min(...ys); r.y1=Math.max(...ye); r.h=Math.max(1,r.y1-r.y0);
-  }
-  return rows.sort((a,b)=>a.y-b.y);
-}
-function overlapRatio(a,b){ const x0=Math.max(a.x0,b.x0), x1=Math.min(a.x1,b.x1); const inter=Math.max(0,x1-x0); const minw=Math.max(1,Math.min(a.w,b.w)); return inter/minw; }
-function rowBelow(rows,anchor,maxDown=120,minOv=0.2){ return rows.filter(r=>r.y>anchor.y && (r.y-anchor.y)<=maxDown && overlapRatio(r,anchor)>=minOv).sort((a,b)=>a.y-b.y)[0]||null; }
-function cleanName(s){ return (s||'').toUpperCase().replace(/[^A-ZÁÉÍÓÚÜÑ' -]/g,' ').replace(/\s+/g,' ').trim(); }
-
-function parseDNI_fromOCR(tess){
-  const out={"Nombre":"","Apellidos":"","Tipo documento":"DNI","Nº Documento":"","Sexo":"","Nacionalidad":"","Fecha nacimiento":""};
-  const rows=groupByLine(tess.words||[]);
-  const has=(r,k)=> (r.text||'').includes(k);
-  const isNom=r=>has(r,'NOMBR'); const isAp=r=>has(r,'APELL')||has(r,'APELID'); const isTri=r=>has(r,'SEXO')&&(has(r,'NACIM')||has(r,'NACI'));
-  // DNI global
-  const all=N((tess.text||'').replace(/=/g,' ')); const m=all.match(/\b\d{8}[ -]?[A-Z]\b/); if(m) out["Nº Documento"]=m[0].replace(/[ -]/g,'');
-  // Nombre
-  const lNom=rows.find(isNom); if(lNom){ const v=rowBelow(rows,lNom,140,0.15); if(v) out["Nombre"]=cleanName(v.textRaw); }
-  // Apellidos
-  const lAp=rows.find(isAp);
-  if(lAp){ const a1=rowBelow(rows,lAp,120,0.15); const a2=a1?rowBelow(rows,a1,90,0.15):null; const j=[a1?.textRaw,a2?.textRaw].filter(Boolean).map(cleanName).join(' '); if(j) out["Apellidos"]=j; }
-  else if(lNom){ const above=rows.filter(r=>r.y<lNom.y).sort((a,b)=>b.y-a.y).slice(0,2).reverse(); const j=above.map(r=>cleanName(r.textRaw)).join(' ').trim(); if(j) out["Apellidos"]=j; }
-  // Sexo/Nac/Fecha
-  const lTri=rows.find(isTri); if(lTri){ const v=rowBelow(rows,lTri,140,0.05); if(v){ const t=N(v.textRaw);
-      const mS=t.match(/\b[MF]\b/); if(mS) out["Sexo"]=mS[0];
-      out["Nacionalidad"]= /\bESP\b/.test(t)?'ESP':((t.match(/\b[A-Z]{3,4}\b/)||[])[0]||'');
-      const mF=v.textRaw.match(/\b(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})\b/);
-      if(mF){ const dd=mF[1].padStart(2,'0'), mm=mF[2].padStart(2,'0'); const yy=mF[3].length===2?('19'+mF[3]):mF[3]; out["Fecha nacimiento"]=`${dd}/${mm}/${yy}`; }
-  }}
-  return out;
-}
-
-// ======= Fusión por consenso de campos =======
-function fuseParsed(list){
-  if(!list.length) return {};
-  const keys=Object.keys(list[0]); const res={};
-  for(const k of keys){
-    const vals=list.map(o=>(o[k]||'').trim()).filter(Boolean);
-    if(!vals.length){ res[k]=''; continue; }
-    const best=majority(vals); res[k]=best||centroidString(vals);
-  }
-  return res;
-}
-function majority(arr){ const m=new Map(); for(const v of arr) m.set(v,(m.get(v)||0)+1);
-  let best=null,cnt=0; for(const [v,c] of m.entries()) if(c>cnt){cnt=c;best=v;}
-  const ties=[...m.values()].filter(c=>c===cnt).length; return ties>1?null:best; }
-function centroidString(arr){ let best=null,score=Infinity; for(const a of arr){ let s=0; for(const b of arr) s+=lev(a,b); if(s<score){score=s;best=a;} } return best||arr[0]; }
-function lev(a,b){ const m=a.length,n=b.length,dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
-  for(let i=0;i<=m;i++) dp[i][0]=i; for(let j=0;j<=n;j++) dp[0][j]=j;
-  for(let i=1;i<=m;i++){ for(let j=1;j<=n;j++){ const c=a[i-1]===b[j-1]?0:1;
-    dp[i][j]=Math.min(dp[i-1][j]+1,dp[i][j-1]+1,dp[i-1][j-1]+c); } } return dp[m][n]; }
 </script>
 </body>
 </html>

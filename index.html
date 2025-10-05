@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>OCR DNI — Cargar → Autogiro 180° → Campos</title>
+<title>OCR DNI — Variantes por ROI + Consenso + Checksum</title>
+<link rel="preconnect" href="https://unpkg.com">
 <style>
   body{margin:0;background:#f6f7f9;color:#111;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-  .app{max-width:920px;margin:0 auto;padding:1rem}
+  .app{max-width:960px;margin:0 auto;padding:1rem}
   .card{background:#fff;padding:1rem;border-radius:14px;box-shadow:0 8px 34px rgba(0,0,0,.06)}
   h1{margin:.25rem 0 1rem}
   #stage{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;display:block}
@@ -14,6 +15,7 @@
   label.btn{padding:.7rem 1rem;border-radius:10px;background:#111;color:#fff;cursor:pointer}
   label.btn input{display:none}
   #status{margin-top:.6rem;text-align:center;color:#555;word-break:break-word}
+
   textarea{width:100%;min-height:140px;margin-top:.75rem}
   pre{background:#f7f7f7;border-radius:10px;padding:.7rem;white-space:pre-wrap}
 </style>
@@ -21,10 +23,10 @@
 <body>
 <div class="app">
   <div class="card">
-    <h1>OCR DNI — Carga única (autogiro 180°, campos básicos)</h1>
+    <h1>OCR DNI — Auto (estable y fino)</h1>
 
     <canvas id="stage"></canvas>
-    <div id="status">Elige una foto del dispositivo. Se normaliza a horizontal, se corrige si está boca abajo y se lanza OCR automático.</div>
+    <div id="status">Elige una foto del dispositivo. Normaliza, auto-gira si hace falta y lee con variantes por ROI.</div>
 
     <div class="toolbar">
       <label class="btn">🖼️ Buscar en dispositivo
@@ -43,7 +45,6 @@
   </div>
 </div>
 
-<!-- Tesseract -->
 <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script>
 (() => {
@@ -55,10 +56,26 @@
   const fieldsEl = document.getElementById('fields');
   const exportEl = document.getElementById('exportArr');
 
+  // Canvas visible (y base de OCR) horizontal 16:9 grande
   const OUT_W = 1800, OUT_H = 1012; // 16:9
   stage.width = OUT_W; stage.height = OUT_H;
 
-  // ===== Helpers canvas =====
+  // ===== Utilidades canvas =====
+  function ensureLandscape(imgBitmap){
+    const sw = imgBitmap.width, sh = imgBitmap.height;
+    const c = document.createElement('canvas');
+    const x = c.getContext('2d');
+    if (sh > sw){
+      c.width = sh; c.height = sw;
+      x.translate(c.width/2, c.height/2);
+      x.rotate(Math.PI/2);
+      x.drawImage(imgBitmap, -sw/2, -sh/2);
+    } else {
+      c.width = sw; c.height = sh;
+      x.drawImage(imgBitmap, 0, 0);
+    }
+    return c;
+  }
   function cover16x9(srcCanvas, tw=OUT_W, th=OUT_H){
     const sw = srcCanvas.width, sh = srcCanvas.height;
     const target = tw/th, ratio = sw/sh;
@@ -77,44 +94,26 @@
     x.drawImage(srcCanvas, 0, 0);
     return c;
   }
-  function ensureLandscape(imgBitmap){
-    // Si viene alta>ancha, gira 90° a paisaje
-    const sw = imgBitmap.width, sh = imgBitmap.height;
-    const c = document.createElement('canvas');
-    const x = c.getContext('2d');
-    if (sh > sw){
-      c.width = sh; c.height = sw;
-      x.translate(c.width/2, c.height/2);
-      x.rotate(Math.PI/2);
-      x.drawImage(imgBitmap, -sw/2, -sh/2);
-    } else {
-      c.width = sw; c.height = sh;
-      x.drawImage(imgBitmap, 0, 0);
-    }
-    return c;
-  }
 
-  // ===== Preprocesado para OCR (automático, fino) =====
-  function prepForOCR(fromCanvas){
-    // Copia → gris → Otsu → unsharp suave 3x3
-    const w = fromCanvas.width, h = fromCanvas.height;
+  // ===== Preprocesado estable (UNA vez): gris + Otsu + unsharp =====
+  function preprocessStable(baseColor){
+    const w = baseColor.width, h = baseColor.height;
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const x = c.getContext('2d', { willReadFrequently:true });
-    x.drawImage(fromCanvas, 0, 0);
-
-    let img = x.getImageData(0,0,w,h);
-    let d = img.data;
+    x.drawImage(baseColor, 0, 0);
+    // gris
+    let img = x.getImageData(0,0,w,h), d = img.data;
     const gray = new Uint8ClampedArray(w*h);
-    for (let i=0,j=0;i<d.length;i+=4,j++){
-      gray[j] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-    }
+    for (let i=0,j=0;i<d.length;i+=4,j++) gray[j] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    // otsu
     const thr = otsu(gray);
     for (let j=0,i=0;j<gray.length;j++,i+=4){
       const v = gray[j] > thr ? 255 : 0;
       d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
     }
     x.putImageData(img,0,0);
-    unsharp(x,w,h);
+    // unsharp
+    unsharp(x, w, h);
     return c;
   }
   function otsu(gray){
@@ -126,26 +125,18 @@
       wB += hist[t]; if (wB===0) continue;
       wF = total - wB; if (wF===0) break;
       sumB += t*hist[t];
-      mB = sumB / wB;
-      mF = (sum - sumB) / wF;
+      mB = sumB / wB; mF = (sum - sumB) / wF;
       const between = wB*wF*(mB-mF)*(mB-mF);
       if (between > varMax){ varMax = between; threshold = t; }
     }
     return threshold;
   }
   function unsharp(ctx, w, h){
-    const src = ctx.getImageData(0,0,w,h);
-    const dst = ctx.createImageData(w,h);
-    const s = src.data, d = dst.data;
-    const idx = (x,y)=> (y*w + x) * 4;
+    const src = ctx.getImageData(0,0,w,h), dst = ctx.createImageData(w,h);
+    const s = src.data, d = dst.data, idx = (x,y)=> (y*w + x) * 4;
     for (let y=1;y<h-1;y++){
       for (let x=1;x<w-1;x++){
-        const i = idx(x,y);
-        const up   = idx(x, y-1);
-        const left = idx(x-1,y);
-        const right= idx(x+1,y);
-        const down = idx(x, y+1);
-        // sharpening sobre valor gris (los 3 canales iguales)
+        const i = idx(x,y), up=idx(x,y-1), left=idx(x-1,y), right=idx(x+1,y), down=idx(x,y+1);
         let v = - s[up] - s[left] + 5*s[i] - s[right] - s[down];
         v = v<0?0:(v>255?255:v);
         d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
@@ -154,23 +145,161 @@
     ctx.putImageData(dst,0,0);
   }
 
-  // ===== Text utils / parser =====
-  function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
-
-  // Puntúa si el texto "parece DNI derecho"
-  function keywordScore(text){
-    const T = norm(text);
-    const keys = ["NOMBRE","APELLID","SEXO","NACIONALIDAD","ESP","DNI","SOPORT","VALIDEZ","NACIM"];
-    let score=0;
-    for (const k of keys){ if (T.includes(k)) score++; }
-    // Bono si detecta un NIF y una fecha razonable
-    if (/\b\d{8}[A-Z]\b/.test(T)) score+=2;
-    if (/\b\d{1,2}[\/.\-\s]\d{1,2}[\/.\-\s]\d{4}\b/.test(T)) score+=1;
-    return score;
+  // ===== OCR helpers =====
+  function createWorker(lang='spa'){
+    return Tesseract.createWorker(lang, 1, {});
+  }
+  async function ocrCanvas(worker, canvas, params={}){
+    await worker.setParameters({
+      tessedit_pageseg_mode: params.psm ?? 6,
+      preserve_interword_spaces: '1',
+      user_defined_dpi: '300',
+      tessedit_char_whitelist: params.whitelist ?? undefined
+    });
+    const blob = await new Promise(res => canvas.toBlob(res,'image/png',0.92));
+    const { data } = await worker.recognize(blob);
+    return data; // { text, words, lines, confidence, ... }
   }
 
-  function parseFields(text){
-    const clean = norm(text);
+  // ===== Variantes geométricas (sobre binaria estable) =====
+  function cropCanvas(src, x,y,w,h){
+    x=Math.max(0,Math.floor(x)); y=Math.max(0,Math.floor(y));
+    w=Math.max(1,Math.floor(w)); h=Math.max(1,Math.floor(h));
+    const c = document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(src, x,y,w,h, 0,0,w,h);
+    return c;
+  }
+  function rotateCanvas(src, deg){
+    const rad = deg*Math.PI/180; const s=Math.sin(rad), c=Math.cos(rad);
+    const w=src.width, h=src.height;
+    const bbW = Math.abs(w*c) + Math.abs(h*s);
+    const bbH = Math.abs(w*s) + Math.abs(h*c);
+    const out = document.createElement('canvas'); out.width=bbW|0; out.height=bbH|0;
+    const x = out.getContext('2d');
+    x.translate(out.width/2, out.height/2);
+    x.rotate(rad);
+    x.drawImage(src, -w/2, -h/2);
+    return out;
+    }
+  function scaleCanvas(src, factor){
+    const out = document.createElement('canvas'); out.width=(src.width*factor)|0; out.height=(src.height*factor)|0;
+    out.getContext('2d').drawImage(src,0,0,out.width,out.height);
+    return out;
+  }
+  function generateVariants(roiCanvas){
+    const variants = [];
+    const angles = [0, -2, 2];
+    const scales = [1.0, 1.05];
+    const shifts = [{dx:0,dy:0},{dx:0.02,dy:0},{dx:-0.02,dy:0}];
+    for (const a of angles){
+      let r = a===0 ? roiCanvas : rotateCanvas(roiCanvas, a);
+      for (const s of scales){
+        let rs = s===1? r : scaleCanvas(r, s);
+        for (const sh of shifts){
+          const dx = (sh.dx*rs.width)|0, dy=(sh.dy*rs.height)|0;
+          const x0 = Math.max(0, 0+dx), y0 = Math.max(0, 0+dy);
+          const x1 = Math.min(rs.width, rs.width+dx);
+          const y1 = Math.min(rs.height, rs.height+dy);
+          const w = (x1-x0)|0, h=(y1-y0)|0;
+          if (w>10 && h>10) variants.push(cropCanvas(rs, x0,y0,w,h));
+        }
+      }
+    }
+    return variants;
+  }
+
+  // ===== Saliencia por componentes conexos (en binaria) para filtrar manchas =====
+  function salientMask(binCanvas){
+    const w=binCanvas.width, h=binCanvas.height;
+    const x = binCanvas.getContext('2d');
+    const img = x.getImageData(0,0,w,h).data;
+    const bin = new Uint8Array(w*h);
+    for (let i=0,j=0;i<img.length;i+=4,j++) bin[j] = img[i]>127 ? 1 : 0;
+
+    const labels = new Int32Array(w*h).fill(0);
+    let current = 0;
+    const comps = [];
+    const stack = [];
+    const inside = (xx,yy)=>xx>=0 && yy>=0 && xx<w && yy<h;
+
+    for (let y=0;y<h;y++){
+      for (let x0=0;x0<w;x0++){
+        const idx=y*w+x0;
+        if (!bin[idx] || labels[idx]) continue;
+        current++;
+        let minx=x0,maxx=x0,miny=y,maxy=y, area=0;
+        stack.length=0; stack.push(idx); labels[idx]=current;
+        while(stack.length){
+          const i0=stack.pop(); area++;
+          const xx=i0%w, yy=(i0/w)|0;
+          if (xx<minx)minx=xx; if (xx>maxx)maxx=xx;
+          if (yy<miny)miny=yy; if (yy>maxy)maxy=yy;
+          // 8-conexión
+          for (let dy=-1; dy<=1; dy++){
+            for (let dx=-1; dx<=1; dx++){
+              if (!dx && !dy) continue;
+              const nx=xx+dx, ny=yy+dy;
+              if (!inside(nx,ny)) continue;
+              const ni=ny*w+nx;
+              if (bin[ni] && !labels[ni]) { labels[ni]=current; stack.push(ni); }
+            }
+          }
+        }
+        const bw=maxx-minx+1, bh=maxy-miny+1, ar=bw*bh;
+        const density = area/ar;
+        // Filtrado heurístico: tamaño y densidad de trazo razonable
+        if (area>=25 && bw>=2 && bh>=4 && density>=0.1 && density<=0.9){
+          comps.push({ x:minx, y:miny, w:bw, h:bh, area, density });
+        }
+      }
+    }
+    return comps;
+  }
+
+  // ===== Texto utils =====
+  function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
+  function levenshtein(a,b){
+    const m=a.length,n=b.length;
+    const dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
+    for(let i=0;i<=m;i++) dp[i][0]=i;
+    for(let j=0;j<=n;j++) dp[0][j]=j;
+    for(let i=1;i<=m;i++){
+      for(let j=1;j<=n;j++){
+        const c=a[i-1]===b[j-1]?0:1;
+        dp[i][j]=Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+c);
+      }
+    }
+    return dp[m][n];
+  }
+  function voteToken(tokens){
+    // mayoría + desempate por mínima suma de Levenshtein
+    const count = new Map();
+    for (const t of tokens) count.set(t, (count.get(t)||0)+1);
+    let best=null, bestC=0;
+    for (const [t,c] of count.entries()){ if (c>bestC){ best=t; bestC=c; } }
+    const ties = [...count.entries()].filter(([t,c])=>c===bestC).map(([t])=>t);
+    if (ties.length===1) return ties[0];
+    let bestSum=Infinity, winner=ties[0];
+    for (const t of ties){
+      let s=0; for (const u of tokens) s+=levenshtein(t,u);
+      if (s<bestSum){ bestSum=s; winner=t; }
+    }
+    return winner;
+  }
+
+  // DNI checksum
+  function fixDNI(nif){
+    // expects pattern 8 digits + letter; if letter wrong, correct
+    const m = nif.match(/^(\d{8})([A-Z])$/); if (!m) return nif;
+    const letters = "TRWAGMYFPDXBNJZSQVHLCKE";
+    const num = parseInt(m[1],10);
+    const correct = letters[num % 23];
+    return m[1] + correct;
+  }
+
+  // ===== Parser por texto plano (nombre/apellidos + reglas) =====
+  function parseFlatFields(fullText){
+    const clean = norm(fullText);
     const now = new Date(); const thisYear = now.getFullYear(); const minYear = thisYear - 100;
 
     const out = {
@@ -186,98 +315,81 @@
       "DOMICILIO": ""
     };
 
-    // Nº DOCUMENTO: 8 dígitos + letra
+    // DNI
     const mDni = clean.match(/\b\d{8}[A-Z]\b/);
-    if (mDni) out["NºDOCUMENTO"] = mDni[0];
+    if (mDni) out["NºDOCUMENTO"] = fixDNI(mDni[0]);
 
-    // FECHA NAC: dd mm aaaa con año lógico
-    const fechas = [...clean.matchAll(/\b(\d{1,2})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{4})\b/g)];
-    for (const f of fechas) {
-      const d = parseInt(f[1],10), m = parseInt(f[2],10), y = parseInt(f[3],10);
-      if (y>=minYear && y<=thisYear && d>=1 && d<=31 && m>=1 && m<=12) {
-        out["FECHA DE NACIMIENTO"] = `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
+    // Fecha
+    const fechas=[...clean.matchAll(/\b(\d{1,2})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{4})\b/g)];
+    for (const f of fechas){
+      const d=parseInt(f[1],10), m=parseInt(f[2],10), y=parseInt(f[3],10);
+      if (y>=minYear && y<=thisYear && d>=1 && d<=31 && m>=1 && m<=12){
+        out["FECHA DE NACIMIENTO"]=`${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
         break;
       }
     }
 
-    // SEXO: M/F → Masculino/Femenino
+    // Sexo
     const mSex = clean.match(/\b([MF])\b/);
     if (mSex) out["SEXO"] = (mSex[1] === 'M') ? 'Masculino' : 'Femenino';
 
-    // NACIONALIDAD: 3 letras, prioriza ESP
-    const mNat = clean.match(/\bESP\b/) || clean.match(/\b[A-Z]{3}\b/);
-    if (mNat) out["NACIONALIDAD"] = mNat[0];
+    // Nacionalidad
+    if (/\bESP(AÑA|AÑOLA)?\b/.test(clean)) out["NACIONALIDAD"] = "España";
+    else {
+      const n3 = clean.match(/\b[A-Z]{3}\b/);
+      out["NACIONALIDAD"] = n3 ? (n3[0]==='ESP'?'España':n3[0]) : "";
+    }
 
-    // === Nombre / Apellidos por anclaje (versión actual y penúltima) ===
+    // Nombre/Apellidos por ancla “NOMBRE”
     const lines = clean.split(/\n+/).map(s=>s.trim()).filter(Boolean);
-
-    // 1) Nombre: línea tras "NOMBRE" o la parte de la propia línea que no sea "NOMBRE"
-    let idxN = lines.findIndex(l => /\bNOMBRE\b/.test(l));
-    if (idxN >= 0){
-      // candidato en la misma línea (después de NOMBRE) o línea siguiente
-      let same = lines[idxN].replace(/.*\bNOMBRE\b[:\- ]*/,'').trim();
-      let next = (lines[idxN+1]||'').trim();
-      const pick = chooseNameCandidate([same, next]);
-      if (pick) out["Nombre"] = pick;
-      // 2) Apellidos: buscar arriba 1-3 líneas con mayúsculas no-etiqueta
-      const windowLines = lines.slice(Math.max(0, idxN-3), idxN+1);
-      const ap = guessSurnames(windowLines);
-      if (ap) out["APELLIDOS"] = ap;
+    const idxN = lines.findIndex(l=>/\bNOMBRE\b/.test(l));
+    if (idxN>=0){
+      const same = lines[idxN].replace(/.*\bNOMBRE\b[:\- ]*/,'').trim();
+      const next = (lines[idxN+1]||'').trim();
+      const nm = chooseNameCandidate([same,next]);
+      if (nm) out["Nombre"]=nm;
+      const upperBlock = lines.slice(Math.max(0,idxN-3), idxN+1);
+      const ap = guessSurnames(upperBlock);
+      if (ap) out["APELLIDOS"]=ap;
     } else {
-      // Fallback: si aparece "APELLID" usar siguiente(s) como apellidos y buscar cerca un nombre de 1-3 tokens
-      const idxA = lines.findIndex(l => /APELLID/.test(l));
-      if (idxA >= 0){
-        const a1 = (lines[idxA+1]||'').trim();
-        const a2 = (lines[idxA+2]||'').trim();
-        const ap = [a1,a2].filter(Boolean).map(cleanTokens).join(' ').trim();
+      // fallback: APELLID
+      const idxA = lines.findIndex(l=>/APELLID/.test(l));
+      if (idxA>=0){
+        const a1=(lines[idxA+1]||'').trim(), a2=(lines[idxA+2]||'').trim();
+        const ap=[a1,a2].filter(Boolean).map(cleanTokens).join(' ').trim();
         if (ap) out["APELLIDOS"]=ap;
-        // Nombre en las 3 líneas siguientes
-        const nameWin = lines.slice(idxA+1, idxA+4);
-        const nm = chooseNameCandidate(nameWin);
+        const nm=chooseNameCandidate(lines.slice(idxA+1, idxA+4));
         if (nm) out["Nombre"]=nm;
       }
     }
 
     return out;
   }
-
   function cleanTokens(s){
     return s.replace(/\b(NOMBRE|APELLIDOS?|SEXO|NACIONALIDAD|NACIMIENTO|EMISION|VALIDEZ|SOPORTE|DOCUMENTO|DNI|TITULAR)\b/g,'')
             .replace(/[^A-ZÁÉÍÓÚÜÑ\s\-']/g,' ')
             .replace(/\s+/g,' ')
             .trim();
   }
-
   function chooseNameCandidate(arr){
-    // Elige 1–3 tokens con pinta de nombre propio (≥3 letras), evita etiquetas
     for (const raw of arr){
-      const s = cleanTokens(raw||'');
-      if (!s) continue;
+      const s = cleanTokens(raw||''); if (!s) continue;
       const toks = s.split(/\s+/).filter(t=>t.length>=2 && !/^\d+$/.test(t));
       if (!toks.length) continue;
-      // preferir 1–2 tokens
-      const best = toks.slice(0, Math.min(3, toks.length)).join(' ');
-      if (best.length >= 3) return best;
+      return toks.slice(0,3).join(' ');
     }
     return '';
   }
-
   function guessSurnames(linesBlock){
-    // Busca dos palabras largas (>=3) en líneas superiores que no sean etiquetas
-    const candidates = [];
-    for (const L of linesBlock){
-      const s = cleanTokens(L);
-      if (!s) continue;
-      const toks = s.split(/\s+/).filter(t=>t.length>=2 && !/^\d+$/.test(t));
-      // si tiene 2+ tokens, buen candidato
+    const candidates=[];
+    for(const L of linesBlock){
+      const s=cleanTokens(L); if(!s) continue;
+      const toks=s.split(/\s+/).filter(t=>t.length>=2 && !/^\d+$/.test(t));
       if (toks.length>=2) candidates.push(toks.slice(0,2).join(' '));
       else if (toks.length===1) candidates.push(toks[0]);
     }
-    // intenta unir dos líneas si son sueltos
-    if (!candidates.length) return '';
-    const joined = candidates.join(' ').split(/\s+/).filter(Boolean);
-    const res = joined.slice(0,2).join(' ').trim();
-    return res || '';
+    const joined=candidates.join(' ').split(/\s+/).filter(Boolean);
+    return joined.slice(0,2).join(' ').trim();
   }
 
   function buildExportArray(data){
@@ -297,97 +409,185 @@
     ];
   }
 
-  // ===== OCR pipeline con autogiro 180° =====
-  async function quickOCR(canvas){
-    const blob = await new Promise(res => canvas.toBlob(res,'image/png',0.92));
-    const worker = await Tesseract.createWorker('spa', 1);
-    await worker.setParameters({ tessedit_pageseg_mode: 6 });
-    const { data } = await worker.recognize(blob);
-    await worker.terminate();
-    return (data.text||'').trim();
+  // ===== Orientación estable: misma binaria para 0° y 180° =====
+  function keywordScore(text){
+    const T = norm(text);
+    const keys = ["NOMBRE","APELLID","SEXO","NACIONALIDAD","ESP","DNI","SOPORT","VALIDEZ","NACIM"];
+    let s=0; for(const k of keys) if (T.includes(k)) s++;
+    if (/\b\d{8}[A-Z]\b/.test(T)) s+=2;
+    if (/\b\d{1,2}[\/.\-\s]\d{1,2}[\/.\-\s]\d{4}\b/.test(T)) s+=1;
+    return s;
   }
 
-  async function fullOCR(canvas){
-    const blob = await new Promise(res => canvas.toBlob(res,'image/png',0.92));
-    const worker = await Tesseract.createWorker('spa', 1);
-    await worker.setParameters({ tessedit_pageseg_mode: 6 });
-    const { data } = await worker.recognize(blob);
-    await worker.terminate();
-    return (data.text||'').trim();
-  }
+  async function orientationStableOCR(baseColor){
+    // baseColor: color, horizontal 16:9 (lo pintamos también en stage)
+    const pre0 = preprocessStable(baseColor);      // binaria *única*
+    const pre180 = rotate180(pre0);                // misma imagen, rotada
 
-  async function runAutoOCR(baseCanvas /* ya horizontal 16:9 */){
-    // 1) Preprocesar (Otsu+unsharp) → OCR rápido para score
-    const pre = prepForOCR(baseCanvas);
-    const text0 = await quickOCR(pre);
-    const score0 = keywordScore(text0);
+    const workerFast = await createWorker('spa');
+    const d0 = await ocrCanvas(workerFast, pre0,  { psm:6 });
+    const d180 = await ocrCanvas(workerFast, pre180, { psm:6 });
+    await workerFast.terminate();
 
-    // 2) Prueba girar 180° y compara
-    const pre180 = prepForOCR(rotate180(baseCanvas));
-    const text180 = await quickOCR(pre180);
-    const score180 = keywordScore(text180);
+    const t0 = (d0.text||'').trim(), t180 = (d180.text||'').trim();
+    const s0 = keywordScore(t0), s180 = keywordScore(t180);
+    let chosenText = t0, chosenBin = pre0, shown = baseColor;
 
-    let chosenCanvas = baseCanvas;
-    let textChosen = text0;
-    if (score180 > score0) {
-      chosenCanvas = rotate180(baseCanvas);
-      textChosen = text180;
-      // redibuja la vista a “stage” para que tú también la veas correctamente
-      ctx.clearRect(0,0,OUT_W,OUT_H);
-      ctx.drawImage(chosenCanvas,0,0);
-      statusEl.textContent = '↻ Detectado boca abajo: girado 180° automáticamente. Ejecutando OCR final…';
+    if (s180 > s0){
+      chosenText = t180;
+      chosenBin = pre180;
+      shown = rotate180(baseColor);
+      ctx.clearRect(0,0,OUT_W,OUT_H); ctx.drawImage(shown,0,0);
+      statusEl.textContent='↻ Girado 180° automáticamente.';
     } else {
-      statusEl.textContent = '✅ Orientación correcta. Ejecutando OCR final…';
+      ctx.clearRect(0,0,OUT_W,OUT_H); ctx.drawImage(baseColor,0,0);
+      statusEl.textContent='✅ Orientación correcta.';
+    }
+    return { chosenText, chosenBin, words: d0.words || [] }; // words de 0° nos sirven para anclas
+  }
+
+  // ===== ROIs por ancla y refinado por variantes + saliencia =====
+  function wordsToLines(words){
+    // agrupa por y ~ (heurístico)
+    const lines = [];
+    for (const w of words||[]){
+      const y = w.baseline ? w.baseline.y0 : w.bbox? w.bbox.y0 : w.confidence>=0? w.y0 : 0;
+      const text = (w.text||'').trim();
+      if (!text) continue;
+      lines.push({ y: w.bbox? w.bbox.y0 : y, x: w.bbox? w.bbox.x0 : 0, text, bbox: w.bbox });
+    }
+    lines.sort((a,b)=>a.y-b.y);
+    return lines;
+  }
+  function findAnchorROI(words, key, expand={x:0.25,y:0.12}){
+    // busca palabra ancla y genera ROI alrededor del renglón
+    if (!words || !words.length) return null;
+    const W = wordsToLines(words);
+    const idx = W.findIndex(w => norm(w.text).includes(key));
+    if (idx<0) return null;
+    const rowY = W[idx].y;
+    // ROI: banda de altura +/-12% y todo el ancho, luego se usará patrón
+    return { x: OUT_W*0.05, y: Math.max(0, rowY - OUT_H*expand.y), w: OUT_W*0.9, h: OUT_H*(expand.y*2+0.08) };
+  }
+
+  async function refineFieldByVariants(binCanvas, roi, kind){
+    // recorta ROI de la binaria y genera variantes
+    const sub = cropCanvas(binCanvas, roi.x, roi.y, roi.w, roi.h);
+    const variants = generateVariants(sub);
+
+    const worker = await createWorker('spa');
+    const readings = [];
+
+    // parámetros por campo
+    let whitelist='', psm=7, post = s=>s;
+    if (kind==='dni'){ whitelist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'; psm=7; post=s=>s.replace(/[^0-9A-Z]/g,''); }
+    if (kind==='date'){ whitelist='0123456789/-. '; psm=7; post=s=>s.replace(/[^0-9/.\-\s]/g,''); }
+    if (kind==='sex'){ whitelist='MF'; psm=10; post=s=>s.replace(/[^MF]/g,''); }
+    if (kind==='nat'){ whitelist='ABCDEFGHIJKLMNOPQRSTUVWXYZ '; psm=7; post=s=>s.replace(/[^A-Z\s]/g,''); }
+
+    for (const v of variants){
+      const data = await ocrCanvas(worker, v, { psm, whitelist });
+      const raw = (data.text||'').trim();
+      const cleaned = post(raw).trim();
+      if (cleaned) readings.push(cleaned);
+    }
+    await worker.terminate();
+
+    if (!readings.length) return '';
+
+    // voto token + limpiezas finales por campo
+    let token = voteToken(readings);
+    if (kind==='dni'){
+      // extraer 8 dígitos + letra, validar y corregir
+      const m = token.match(/\b\d{8}[A-Z]\b/);
+      if (m) token = fixDNI(m[0]);
+      else {
+        // a veces separado: une y reintenta
+        const j = token.replace(/\s+/g,'');
+        const m2 = j.match(/\d{8}[A-Z]/);
+        if (m2) token = fixDNI(m2[0]); else token='';
+      }
+    }
+    if (kind==='date'){
+      // normaliza primera fecha válida
+      const fechas=[...token.matchAll(/\b(\d{1,2})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{4})\b/g)];
+      const now=new Date(), thisYear=now.getFullYear(), minYear=thisYear-100;
+      let ok='';
+      for (const f of fechas){
+        const d=parseInt(f[1],10), m=parseInt(f[2],10), y=parseInt(f[3],10);
+        if (y>=minYear && y<=thisYear && d>=1 && d<=31 && m>=1 && m<=12){
+          ok=`${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`; break;
+        }
+      }
+      token=ok;
+    }
+    if (kind==='sex'){
+      token = /F/.test(token) ? 'Femenino' : /M/.test(token) ? 'Masculino' : '';
+    }
+    if (kind==='nat'){
+      token = /\bESP(AÑA|AÑOLA)?\b/.test(token) ? 'España' : (/\bESP\b/.test(token)?'España':(token.split(/\s+/).find(t=>t.length===3) || ''));
     }
 
-    // 3) OCR “bueno” (preprocesado fino) sobre la orientación elegida
-    const finalPre = prepForOCR(chosenCanvas);
-    const finalText = await fullOCR(finalPre);
-
-    return finalText;
+    return token;
   }
 
-  // ===== Carga de archivo =====
+  async function fullPipeline(baseColor){
+    // 1) Orientación estable (comparando misma binaria)
+    const { chosenText, chosenBin, words } = await orientationStableOCR(baseColor);
+
+    // 2) Anclas → ROIs (si alguna no aparece, creamos fallback ROI genérico)
+    // DNI: suele estar visible; si no hay ancla, exploramos banda inferior
+    const roiSex = findAnchorROI(words, 'SEXO') || {x:OUT_W*0.05,y:OUT_H*0.56,w:OUT_W*0.9,h:OUT_H*0.10};
+    const roiNat = findAnchorROI(words, 'NACIONAL') || {x:OUT_W*0.20,y:OUT_H*0.56,w:OUT_W*0.75,h:OUT_H*0.10};
+    const roiDate= findAnchorROI(words, 'NACIM')   || {x:OUT_W*0.40,y:OUT_H*0.56,w:OUT_W*0.55,h:OUT_H*0.12};
+    // DNI ROI: cerca de “DNI” o “DOCUMENTO” o “NUM SOPORTE”; fallback: franja central-alta derecha
+    let roiDni = findAnchorROI(words,'DNI') || findAnchorROI(words,'DOCUMENTO') || {x:OUT_W*0.55,y:OUT_H*0.20,w:OUT_W*0.40,h:OUT_H*0.18};
+
+    // 3) Refinado por variantes + saliencia (sobre binaria)
+    // (Saliencia se usa implícitamente al binarizar; si quisieras, podrías intersectar comp. conexos aquí)
+    const dni = await refineFieldByVariants(chosenBin, roiDni, 'dni');
+    const fec = await refineFieldByVariants(chosenBin, roiDate, 'date');
+    const sex = await refineFieldByVariants(chosenBin, roiSex, 'sex');
+    const nat = await refineFieldByVariants(chosenBin, roiNat, 'nat');
+
+    // 4) Nombre y Apellidos por ancla (del texto plano ya elegido)
+    const parsedFlat = parseFlatFields(chosenText);
+    if (dni) parsedFlat["NºDOCUMENTO"]=dni;
+    if (fec) parsedFlat["FECHA DE NACIMIENTO"]=fec;
+    if (sex) parsedFlat["SEXO"]=sex;
+    if (nat) parsedFlat["NACIONALIDAD"]=nat;
+
+    return { text: chosenText, fields: parsedFlat };
+  }
+
+  // ===== Carga y disparo =====
   async function loadFromFile(file){
-    statusEl.textContent = 'Cargando imagen…';
-    const bmp = await createImageBitmap(file); // EXIF suele venir aplicado por el navegador
-    // Normalizar a paisaje + encuadrar 16:9
-    const landscape = ensureLandscape(bmp);
-    const base = cover16x9(landscape, OUT_W, OUT_H);
+    try{
+      statusEl.textContent='Cargando imagen…';
+      const bmp = await createImageBitmap(file);
+      const landscape = ensureLandscape(bmp);
+      const base = cover16x9(landscape, OUT_W, OUT_H);
 
-    // Mostrarte lo que se usará
-    ctx.clearRect(0,0,OUT_W,OUT_H);
-    ctx.drawImage(base,0,0);
+      // muestra lo que se usará (color base)
+      ctx.clearRect(0,0,OUT_W,OUT_H); ctx.drawImage(base,0,0);
 
-    // OCR auto con autogiro
-    statusEl.textContent = 'Analizando orientación y leyendo…';
-    const finalText = await runAutoOCR(base);
-
-    out.value = finalText;
-
-    const parsed = parseFields(finalText);
-    fieldsEl.textContent = JSON.stringify(parsed, null, 2);
-    exportEl.textContent = JSON.stringify(buildExportArray(parsed), null, 2);
-
-    statusEl.textContent = '✅ OCR completado.';
+      statusEl.textContent='Procesando…';
+      const { text, fields } = await fullPipeline(base);
+      out.value = text;
+      fieldsEl.textContent = JSON.stringify(fields, null, 2);
+      exportEl.textContent = JSON.stringify(buildExportArray(fields), null, 2);
+      statusEl.textContent='✅ OCR completado.';
+    }catch(e){
+      console.error(e);
+      statusEl.textContent='❌ Error en carga/OCR.';
+    }
   }
 
-  // ===== Eventos =====
   fileInput.addEventListener('change', async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
-    try { await loadFromFile(f); }
-    catch(err){ console.error(err); statusEl.textContent='❌ Error cargando/OCR.'; }
-    finally { e.target.value=''; }
+    await loadFromFile(f);
+    e.target.value='';
   });
-
-  // ====== (Para tu ejemplo aportado) qué sacaría el parser ======
-  // Con el texto que pasaste, el parser asignaría:
-  // Nombre: CRISTINA
-  // Apellidos: NAVARRETE NAVARRO
-  // NºDOCUMENTO: 51578798X
-  // SEXO: (detecta F → Femenino, M → Masculino)
-  // FECHA DE NACIMIENTO: 29/10/1965
-  // NACIONALIDAD: ESP
 })();
 </script>
 </body>

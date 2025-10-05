@@ -3,122 +3,126 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>OCR DNI – Un solo display (B/N, disparo, rotar)</title>
+<title>OCR DNI — 5 fotos en B/N con consenso</title>
 <link rel="preconnect" href="https://unpkg.com">
 <style>
   :root { --bg:#f6f7f9; --fg:#111; --card:#fff; }
-  html,body{background:var(--bg); color:var(--fg); font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   .app{max-width:920px;margin:0 auto;padding:1rem}
-  .panel{background:var(--card); border-radius:14px; box-shadow:0 8px 34px rgba(0,0,0,.06); padding:1rem}
-  .toolbar{display:flex; flex-wrap:wrap; gap:.5rem; justify-content:center; margin:.75rem 0}
-  button,label.btn{padding:.65rem .9rem; border:none; border-radius:10px; cursor:pointer; background:#111; color:#fff; font-size:1rem}
-  button:disabled{opacity:.55; cursor:not-allowed}
-  #stageWrap{position:relative; margin:0 auto; max-width:720px; width:100%;}
-  #stage{width:100%; aspect-ratio:16/9; background:#000; border-radius:12px; display:block}
-  #status{position:absolute; bottom:8px; left:0; right:0; text-align:center; color:#fff; background:rgba(0,0,0,.45); padding:6px; border-radius:10px; font-size:.95rem}
-  #meta{display:flex; justify-content:center; gap:1rem; margin-top:.25rem; color:#555; font-size:.9rem}
-  textarea{width:100%; min-height:160px; margin-top:.5rem}
-  pre{background:#f7f7f7; border-radius:10px; padding:.7rem; white-space:pre-wrap}
+  .card{background:var(--card);border-radius:14px;box-shadow:0 8px 34px rgba(0,0,0,.06);padding:1rem}
+  h1{margin:.3rem 0 1rem}
+  #stage{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;display:block}
+  .toolbar{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin:.75rem 0}
+  button,label.btn{padding:.65rem .9rem;border:none;border-radius:10px;cursor:pointer;background:#111;color:#fff;font-size:1rem}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  #counter{margin:.25rem 0;text-align:center;color:#555}
+  textarea{width:100%;min-height:160px;margin-top:.5rem}
+  pre{background:#f7f7f7;border-radius:10px;padding:.7rem;white-space:pre-wrap}
   input[type=range]{width:140px}
+  .row{display:flex;gap:1rem;justify-content:center;color:#555}
 </style>
 </head>
 <body>
 <div class="app">
-  <div class="panel">
-    <h2 style="margin:.2rem 0 0 0">OCR DNI – B/N + Disparo + Rotar</h2>
+  <div class="card">
+    <h1>OCR DNI — 5 fotos B/N (consenso)</h1>
 
-    <div id="stageWrap">
-      <canvas id="stage"></canvas>
-      <div id="status">Pulsa “Iniciar cámara”</div>
-    </div>
+    <canvas id="stage"></canvas>
+    <div id="counter">0 / 5 fotos</div>
 
-    <div id="meta">
+    <div class="row">
       <div>🌗 Contraste: <input id="contrast" type="range" min="0.8" max="2.2" step="0.05" value="1.6"></div>
       <div>🟡 Brillo: <input id="brightness" type="range" min="0.7" max="1.5" step="0.05" value="1.0"></div>
     </div>
 
     <div class="toolbar">
-      <button id="start">🎥 Iniciar cámara</button>
-      <button id="shoot" disabled>📸 Disparo / Reanudar</button>
-      <button id="rotate" disabled>↻ Girar 90°</button>
-      <button id="ocr" disabled>📖 OCR</button>
-      <label class="btn">🖼️ Buscar imagen
-        <input id="file" type="file" accept="image/*" style="display:none">
+      <label class="btn">📷 Tomar foto
+        <input id="take" type="file" accept="image/*" capture="environment" style="display:none">
       </label>
-      <button id="clear">🧹 Limpiar</button>
+      <button id="rotate">↻ Rotar 90°</button>
+      <button id="undo">↩️ Deshacer última</button>
+      <button id="reset">🧹 Reiniciar lote</button>
+      <button id="run" disabled>📖 Ejecutar OCR (5)</button>
     </div>
 
-    <h3>Salida OCR</h3>
+    <h3>Texto fusionado</h3>
     <textarea id="out" placeholder="Aquí aparecerá el texto…"></textarea>
 
-    <h3>Campos (básico)</h3>
+    <h3>Campos (consenso)</h3>
     <pre id="fields"></pre>
+
+    <h3>Textos individuales (debug)</h3>
+    <pre id="debug"></pre>
   </div>
 </div>
 
-<!-- Tesseract -->
 <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script>
 (() => {
-  const els = (id) => document.getElementById(id);
-  const stage = els('stage');
-  const ctx = stage.getContext('2d', { willReadFrequently:true });
-  const statusEl = els('status');
-  const startBtn = els('start');
-  const shootBtn = els('shoot');
-  const rotateBtn = els('rotate');
-  const ocrBtn = els('ocr');
-  const clearBtn = els('clear');
-  const fileInput = els('file');
-  const out = els('out');
-  const fieldsEl = els('fields');
-  const contrast = els('contrast');
-  const brightness = els('brightness');
+  const $ = id => document.getElementById(id);
+  const stage = $('stage');
+  const ctx = stage.getContext('2d', { willReadFrequently: true });
+
+  const take = $('take');
+  const rotateBtn = $('rotate');
+  const undoBtn = $('undo');
+  const resetBtn = $('reset');
+  const runBtn = $('run');
+  const out = $('out');
+  const fieldsEl = $('fields');
+  const debugEl = $('debug');
+  const counter = $('counter');
+  const contrast = $('contrast');
+  const brightness = $('brightness');
 
   // Estado
-  let stream = null;
-  let video = document.createElement('video');
-  video.playsInline = true; video.muted = true; video.autoplay = true;
-  let running = false;          // loop de pintado
-  let frozen = false;           // display congelado tras disparo
-  let angle = 0;                // 0, 90, 180, 270
-  let lastFrameTime = 0;
+  let angle = 0;               // 0/90/180/270
+  let lastImage = null;        // ImageBitmap de la última foto cargada (para volver a rotar si quieres)
+  const lot = [];              // blobs en PNG procesados (B/N) listos para OCR, máx. 5
 
-  // Dimensiones canvas
-  function fitCanvas() {
-    // Mantén 16:9 lógico; el CSS ya da el tamaño visible.
-    stage.width = 1600;
-    stage.height = 900;
+  // Canvas fijo 16:9 para verlo igual siempre
+  function initCanvas(){ stage.width = 1600; stage.height = 900; }
+  initCanvas(); window.addEventListener('resize', initCanvas);
+
+  function setCounter(){
+    counter.textContent = `${lot.length} / 5 fotos`;
+    runBtn.disabled = lot.length !== 5;
   }
-  fitCanvas();
-  window.addEventListener('resize', fitCanvas);
 
-  // Filtros B/N + contraste/brillo
-  function drawBWFrame(img, rotateDeg=0) {
-    ctx.save();
-    ctx.clearRect(0,0,stage.width,stage.height);
-
-    // Rotar si procede (centrado)
-    if (rotateDeg % 360 !== 0) {
-      ctx.translate(stage.width/2, stage.height/2);
-      ctx.rotate(rotateDeg * Math.PI/180);
-      ctx.translate(-stage.width/2, -stage.height/2);
-    }
-
-    // Dibujar fuente "cover" a 16:9
+  function drawBW(img){
+    // Dibujar “cover” 16:9
     const sw = img.videoWidth || img.width;
     const sh = img.videoHeight || img.height;
-    const targetRatio = stage.width / stage.height;
-    const srcRatio = sw / sh;
-    let sx, sy, cw, ch;
-    if (srcRatio > targetRatio) { // recortar ancho
-      ch = sh; cw = Math.round(sh * targetRatio);
-      sx = Math.round((sw - cw)/2); sy = 0;
-    } else { // recortar alto
-      cw = sw; ch = Math.round(sw / targetRatio);
-      sx = 0; sy = Math.round((sh - ch)/2);
+
+    // Rotación
+    const tmp = document.createElement('canvas');
+    let tw = sw, th = sh;
+    if (angle % 180 !== 0){ tw = sh; th = sw; }
+    tmp.width = tw; tmp.height = th;
+    const tctx = tmp.getContext('2d');
+    tctx.save();
+    if (angle % 360 !== 0){
+      tctx.translate(tw/2, th/2);
+      tctx.rotate(angle * Math.PI/180);
+      tctx.drawImage(img, -sw/2, -sh/2);
+    } else {
+      tctx.drawImage(img, 0, 0);
     }
-    ctx.drawImage(img, sx, sy, cw, ch, 0, 0, stage.width, stage.height);
+    tctx.restore();
+
+    // Recorte cover a 16:9
+    const targetRatio = stage.width / stage.height;
+    const srcRatio = tw / th;
+    let sx, sy, cw, ch;
+    if (srcRatio > targetRatio){
+      ch = th; cw = Math.round(th * targetRatio);
+      sx = Math.round((tw - cw)/2); sy = 0;
+    } else {
+      cw = tw; ch = Math.round(tw / targetRatio);
+      sx = 0; sy = Math.round((th - ch)/2);
+    }
+    ctx.clearRect(0,0,stage.width,stage.height);
+    ctx.drawImage(tmp, sx, sy, cw, ch, 0, 0, stage.width, stage.height);
 
     // B/N + contraste/brillo
     const imgData = ctx.getImageData(0,0,stage.width,stage.height);
@@ -126,109 +130,123 @@
     const c = parseFloat(contrast.value);
     const b = parseFloat(brightness.value);
     for (let i=0;i<d.length;i+=4){
-      let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];  // gris
-      g = g * c * b;                                     // contraste/brillo
-      g = Math.max(0, Math.min(255, g));
+      let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+      g = g * c * b;
+      g = g < 0 ? 0 : g > 255 ? 255 : g;
       d[i]=d[i+1]=d[i+2]=g; d[i+3]=255;
     }
     ctx.putImageData(imgData, 0, 0);
-    ctx.restore();
   }
 
-  async function startCamera() {
-    if (stream) return;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height:{ ideal: 720 }, aspectRatio:{ ideal: 1.777 } }
-      });
-      video.srcObject = stream;
-      await video.play();
-      running = true; frozen = false; angle = 0;
-      statusEl.textContent = 'En vivo (B/N). Pulsa 📸 para congelar.';
-      shootBtn.disabled = false; rotateBtn.disabled = false; ocrBtn.disabled = true;
-      loop();
-    } catch (e) {
-      console.error(e);
-      statusEl.textContent = '❌ No se pudo iniciar la cámara.';
-    }
-  }
-
-  function stopCamera() {
-    if (stream) { stream.getTracks().forEach(t=>t.stop()); stream = null; }
-    running = false;
-  }
-
-  function loop(ts=0) {
-    if (!running) return;
-    // limitar a ~30 fps
-    if (ts - lastFrameTime > 33) {
-      drawBWFrame(video, angle);
-      lastFrameTime = ts;
-    }
-    requestAnimationFrame(loop);
-  }
-
-  // Disparo: pausa/reanuda
-  function toggleFreeze() {
-    if (!stream && !frozen) return; // no hay nada
-    frozen = !frozen;
-    if (frozen) {
-      running = false; // paramos el loop, se queda el último frame dibujado
-      statusEl.textContent = '🧊 Congelado. Ajusta contraste/rotar y pulsa OCR o 📸 para reanudar.';
-      ocrBtn.disabled = false;
-    } else {
-      if (stream) {
-        running = true;
-        statusEl.textContent = 'En vivo (B/N). Pulsa 📸 para congelar.';
-        requestAnimationFrame(loop);
-        ocrBtn.disabled = true;
-      }
-    }
-  }
-
-  function rotate90() {
-    angle = (angle + 90) % 360;
-    // Redibujar con la nueva rotación
-    if (frozen) {
-      // si está congelado, re-renderizamos el propio canvas (no hay video)
-      // Nada que “leer”: simplemente deja el canvas como está; el OCR usará la rotación guardada
-      const img = new Image();
-      img.onload = () => drawBWFrame(img, angle);
-      img.src = stage.toDataURL('image/png');
-    }
-  }
-
-  // OCR desde el canvas actual (tal cual lo ves)
-  async function doOCR() {
-    ocrBtn.disabled = true;
-    statusEl.textContent = 'Procesando OCR…';
-    out.value = ''; fieldsEl.textContent = '';
-
+  async function addFromFile(file){
+    const img = await createImageBitmap(file);
+    lastImage = img;
+    drawBW(img);
+    // guardamos el canvas actual como PNG para OCR (lo que ves es lo que lee)
     const blob = await new Promise(res => stage.toBlob(res, 'image/png', 1));
+    lot.push(blob);
+    setCounter();
+  }
+
+  // Controles
+  take.addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (lot.length >= 5){
+      alert('Ya hay 5 fotos. Usa Reiniciar o Deshacer para cambiar.');
+      take.value = '';
+      return;
+    }
+    await addFromFile(f);
+    take.value = '';
+  });
+
+  rotateBtn.addEventListener('click', async () => {
+    angle = (angle + 90) % 360;
+    if (lastImage) drawBW(lastImage);
+  });
+
+  undoBtn.addEventListener('click', () => {
+    if (!lot.length) return;
+    lot.pop();
+    setCounter();
+    // Si hay imagen previa, redibuja última añadida si la teníamos
+    if (lastImage) drawBW(lastImage);
+  });
+
+  resetBtn.addEventListener('click', () => {
+    lot.length = 0;
+    setCounter();
+    ctx.clearRect(0,0,stage.width,stage.height);
+    lastImage = null; angle = 0; out.value=''; fieldsEl.textContent=''; debugEl.textContent='';
+  });
+
+  contrast.addEventListener('input', () => { if (lastImage) drawBW(lastImage); });
+  brightness.addEventListener('input', () => { if (lastImage) drawBW(lastImage); });
+
+  runBtn.addEventListener('click', async () => {
+    if (lot.length !== 5) return;
+
+    out.value = 'Procesando OCR (5 fotos)…';
+    fieldsEl.textContent = ''; debugEl.textContent = '';
+
     const worker = await Tesseract.createWorker('spa', 1, { logger: m => console.log(m) });
-    const { data } = await worker.recognize(blob);
+    const texts = [];
+    const parsed = [];
+
+    for (let i=0;i<lot.length;i++){
+      const { data } = await worker.recognize(lot[i]);
+      const t = (data.text || '').trim();
+      texts.push(t);
+      parsed.push(parseDNI(t));
+    }
     await worker.terminate();
 
-    out.value = (data.text || '').trim();
-    const parsed = parseDNI(out.value);
-    fieldsEl.textContent = JSON.stringify(parsed, null, 2);
-    statusEl.textContent = '✅ OCR listo';
+    // Depuración
+    debugEl.textContent = texts.map((t,i)=>`--- Foto ${i+1} ---\n${t}`).join('\n\n');
+
+    // Fusión por consenso
+    const fusedText = fuseText(texts);
+    out.value = fusedText;
+
+    const fusedFields = fuseParsed(parsed);
+    fieldsEl.textContent = JSON.stringify(fusedFields, null, 2);
+  });
+
+  // ======== Consenso de TEXTO completo (opcional) ========
+  function fuseText(texts){
+    // mayoría por token: elige la opción más repetida en cada posición
+    const tokenized = texts.map(t => t.split(/\s+/));
+    const maxLen = Math.max(...tokenized.map(a=>a.length));
+    const res = [];
+    for (let i=0;i<maxLen;i++){
+      const col = tokenized.map(a=>a[i]).filter(Boolean);
+      if (!col.length) continue;
+      const m = majority(col);
+      res.push(m || centroidString(col));
+    }
+    return res.join(' ');
   }
 
-  // Parser muy básico por etiquetas (mejoraremos luego)
+  // ======== Parser y Consenso de CAMPOS ========
   function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'')
     .replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ')
     .trim().toUpperCase(); }
+
   function parseDNI(text){
     const clean = norm(text);
     const out = { "Nombre":"", "Apellidos":"", "Tipo documento":"DNI", "Nº Documento":"", "Sexo":"", "Nacionalidad":"", "Fecha nacimiento":"" };
-    const mDni = clean.match(/\b\d{8}[A-Z]\b/); if (mDni) out["Nº Documento"] = mDni[0];
+
+    const mDni = clean.match(/\b\d{8}[A-Z]\b/);
+    if (mDni) out["Nº Documento"] = mDni[0];
+
     const lines = clean.split(/\n| {2,}/);
     for (let i=0;i<lines.length;i++){
       const l = lines[i];
       if (l.includes("APELLID")) out["Apellidos"] = (lines[i+1]||"").split(' ').slice(0,4).join(' ');
       if (l.includes("NOMBRE"))  out["Nombre"]   = (lines[i+1]||"").split(' ').slice(0,3).join(' ');
     }
+
     const mLine = clean.match(/\b[MF]\b.*?\b[A-Z]{3}\b.*?\b\d{1,2} \d{1,2} \d{4}\b/);
     if (mLine) {
       const parts = mLine[0].split(/\s+/);
@@ -240,35 +258,54 @@
     return out;
   }
 
-  // Cargar imagen del dispositivo al mismo display
-  fileInput.addEventListener('change', async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    stopCamera();
-    const img = new Image();
-    img.onload = () => {
-      running = false; frozen = true; angle = 0;
-      drawBWFrame(img, angle);
-      statusEl.textContent = '🖼️ Imagen cargada (B/N). Puedes rotar o hacer OCR.';
-      shootBtn.disabled = false; rotateBtn.disabled = false; ocrBtn.disabled = false;
-    };
-    img.src = URL.createObjectURL(f);
-  });
+  function fuseParsed(list){
+    if (!list.length) return {};
+    const keys = Object.keys(list[0]);
+    const res = {};
+    for (const k of keys){
+      const vals = list.map(o => (o[k]||'').trim()).filter(Boolean);
+      if (!vals.length){ res[k]=''; continue; }
+      const best = majority(vals);
+      res[k] = best || centroidString(vals);
+    }
+    // Une dos apellidos si vienen separados
+    if (res["Apellidos"]) {
+      res["Apellidos"] = res["Apellidos"].replace(/\s{2,}/g,' ').trim();
+    }
+    return res;
+  }
 
-  // Controles
-  startBtn.onclick = startCamera;
-  shootBtn.onclick = toggleFreeze;
-  rotateBtn.onclick = rotate90;
-  ocrBtn.onclick = doOCR;
-  clearBtn.onclick = () => {
-    stopCamera();
-    ctx.clearRect(0,0,stage.width,stage.height);
-    out.value=''; fieldsEl.textContent='';
-    statusEl.textContent='Pulsa “Iniciar cámara”';
-    shootBtn.disabled = true; rotateBtn.disabled = true; ocrBtn.disabled = true;
-  };
-  contrast.oninput = () => { if (running) drawBWFrame(video, angle); };
-  brightness.oninput = () => { if (running) drawBWFrame(video, angle); };
+  function majority(arr){
+    const map = new Map();
+    for (const v of arr) map.set(v, (map.get(v)||0)+1);
+    let best=null, cnt=0;
+    for (const [v,c] of map.entries()) if (c>cnt){ cnt=c; best=v; }
+    const ties = [...map.values()].filter(c=>c===cnt).length;
+    return ties>1 ? null : best;
+  }
+
+  function centroidString(arr){
+    let best=null, bestScore=Infinity;
+    for (const a of arr){
+      let sum=0; for (const b of arr) sum += lev(a,b);
+      if (sum < bestScore){ bestScore=sum; best=a; }
+    }
+    return best || arr[0];
+  }
+
+  function lev(a,b){
+    const m=a.length, n=b.length;
+    const dp = Array.from({length:m+1},()=>Array(n+1).fill(0));
+    for(let i=0;i<=m;i++) dp[i][0]=i;
+    for(let j=0;j<=n;j++) dp[0][j]=j;
+    for(let i=1;i<=m;i++){
+      for(let j=1;j<=n;j++){
+        const c = a[i-1]===b[j-1] ? 0 : 1;
+        dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+c);
+      }
+    }
+    return dp[m][n];
+  }
 })();
 </script>
 </body>

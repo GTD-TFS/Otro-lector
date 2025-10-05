@@ -3,26 +3,34 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>OCR DNI — 2 capturas manuales horizontales</title>
+<title>OCR DNI — 2 capturas manuales (display vivo vertical, captura horizontal)</title>
 <link rel="preconnect" href="https://unpkg.com">
 <style>
   :root { --bg:#f6f7f9; --fg:#111; --card:#fff; }
   body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   .app{max-width:920px;margin:0 auto;padding:1rem}
   .card{background:var(--card);border-radius:14px;box-shadow:0 8px 34px rgba(0,0,0,.06);padding:1rem}
+
   h1{margin:.3rem 0 1rem}
+
+  /* Contenedor del canvas: en vivo = vertical 9:16, en revisión = horizontal 16:9 */
   #stageWrap{position:relative;max-width:720px;margin:0 auto}
-  #stage{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;display:block;border:6px solid #ccc;transition:border-color .2s}
+  #stageWrap.live  #stage{aspect-ratio:9/16}
+  #stageWrap.review#stage{aspect-ratio:16/9}
+  #stage{width:100%;background:#000;border-radius:12px;display:block;border:6px solid #ccc;transition:border-color .2s, aspect-ratio .2s}
   #stageWrap.good #stage{border-color:#22c55e}
   #stageWrap.mid  #stage{border-color:#eab308}
   #stageWrap.bad  #stage{border-color:#ef4444}
   #status{position:absolute;bottom:8px;left:0;right:0;text-align:center;color:#fff;background:rgba(0,0,0,.45);padding:6px;border-radius:10px;font-size:.95rem}
+
   .toolbar{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin:.75rem 0}
   button,label.btn{padding:.65rem .9rem;border:none;border-radius:10px;cursor:pointer;background:#111;color:#fff;font-size:1rem}
   button:disabled{opacity:.55;cursor:not-allowed}
+
   .row{display:flex;gap:1rem;justify-content:center;color:#555}
   input[type=range]{width:160px}
   #counter{text-align:center;color:#555;margin:.25rem 0}
+
   textarea{width:100%;min-height:160px;margin-top:.5rem}
   pre{background:#f7f7f7;border-radius:10px;padding:.7rem;white-space:pre-wrap}
 </style>
@@ -30,12 +38,13 @@
 <body>
 <div class="app">
   <div class="card">
-    <h1>OCR DNI — 2 capturas manuales (B/N, horizontal)</h1>
+    <h1>OCR DNI — 2 capturas manuales</h1>
 
-    <div id="stageWrap" class="bad">
+    <div id="stageWrap" class="live bad">
       <canvas id="stage"></canvas>
-      <div id="status">Pulsa “Hacer foto” para iniciar la cámara</div>
+      <div id="status">Pulsa “Hacer foto” para iniciar la cámara (display vertical)</div>
     </div>
+
     <div id="counter">0 / 2 capturas</div>
 
     <div class="row">
@@ -76,33 +85,49 @@
   const out = $('out');
   const fieldsEl = $('fields');
 
-  // Estado
+  // ====== Estado ======
   let video = document.createElement('video'); video.autoplay=true; video.muted=true; video.playsInline=true;
-  let stream = null, running = false;
-  let lastImage = null;          // última imagen cargada para re-render con sliders
-  let sources = [];              // blobs PNG B/N (máx. 2)
-  let shootInProgress = false;   // antirrebote
+  let stream = null, running = false, inLive = false;
+  let sources = [];            // blobs PNG horizontales (máx. 2)
+  let shootInProgress = false; // antirrebote
 
-  // Canvas 16:9 grande
-  function initCanvas(){ stage.width = 1600; stage.height = 900; }
-  initCanvas(); window.addEventListener('resize', initCanvas);
+  // Canvas visible (tamaño cambia por modo), y canvas lógico horizontal (16:9) que se OCRiza
+  function setLiveCanvasSize(){ stage.width = 900;  stage.height = 1600; }   // 9:16 (vertical)
+  function setReviewCanvasSize(){ stage.width = 1600; stage.height = 900; }  // 16:9 (horizontal)
+  setLiveCanvasSize();
+
+  const logical = document.createElement('canvas'); // SIEMPRE horizontal 16:9
+  logical.width = 1600; logical.height = 900;
+  const lctx = logical.getContext('2d', { willReadFrequently:true });
 
   function setCounter(){
     counter.textContent = `${sources.length} / 2 capturas`;
     ocrBtn.disabled = sources.length === 0;
   }
 
-  // ---- Dibujado SIEMPRE HORIZONTAL: rotar si el sensor viene vertical ----
-  function drawBWHorizontal(source){
-    // 1) Normalizar a horizontal (si alto>ancho, rotamos 90º)
+  // ====== Filtros B/N ======
+  function applyBW(ctx2d, w, h){
+    const data = ctx2d.getImageData(0,0,w,h);
+    const d = data.data;
+    const c = parseFloat(contrast.value);
+    const b = parseFloat(brightness.value);
+    for (let i=0;i<d.length;i+=4){
+      let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+      g = g * c * b; if (g<0) g=0; if (g>255) g=255;
+      d[i]=d[i+1]=d[i+2]=g; d[i+3]=255;
+    }
+    ctx2d.putImageData(data,0,0);
+  }
+
+  // ====== Render “lógico” (siempre horizontal 16:9): ROTAR si hace falta + COVER + B/N ======
+  function renderToLogicalHorizontal(source){
+    // Normaliza la fuente a horizontal antes del recorte
     const sw0 = source.videoWidth || source.width;
     const sh0 = source.videoHeight || source.height;
 
-    const srcCanvas = document.createElement('canvas');
-    const sctx = srcCanvas.getContext('2d');
-
-    if (sh0 > sw0) {
-      // rotamos a paisaje
+    // Si la fuente es vertical, rotamos 90° a un canvas temporal
+    let srcCanvas = document.createElement('canvas'), sctx = srcCanvas.getContext('2d');
+    if (sh0 > sw0){
       srcCanvas.width = sh0; srcCanvas.height = sw0;
       sctx.translate(srcCanvas.width/2, srcCanvas.height/2);
       sctx.rotate(Math.PI/2);
@@ -112,9 +137,9 @@
       sctx.drawImage(source, 0, 0);
     }
 
-    // 2) Recorte cover a 16:9
+    // Recorte COVER a 16:9 dentro del canvas lógico
     const sw = srcCanvas.width, sh = srcCanvas.height;
-    const targetRatio = stage.width / stage.height;
+    const targetRatio = logical.width / logical.height; // 16:9
     const srcRatio = sw / sh;
     let sx, sy, cw, ch;
     if (srcRatio > targetRatio){
@@ -125,23 +150,33 @@
       sx = 0; sy = Math.round((sh - ch)/2);
     }
 
-    ctx.clearRect(0,0,stage.width,stage.height);
-    ctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, stage.width, stage.height);
+    // Dibujar en lógico horizontal
+    lctx.clearRect(0,0,logical.width,logical.height);
+    lctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, logical.width, logical.height);
 
-    // 3) B/N + contraste/brillo (lo que ves = lo que se guarda)
-    const data = ctx.getImageData(0,0,stage.width,stage.height);
-    const d = data.data;
-    const c = parseFloat(contrast.value);
-    const b = parseFloat(brightness.value);
-    for (let i=0;i<d.length;i+=4){
-      let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-      g = g * c * b; if (g<0) g=0; if (g>255) g=255;
-      d[i]=d[i+1]=d[i+2]=g; d[i+3]=255;
-    }
-    ctx.putImageData(data,0,0);
+    // Filtro B/N
+    applyBW(lctx, logical.width, logical.height);
   }
 
-  // ---- Calidad (nivel 5) ----
+  // ====== Mostrar en VIVO (display vertical): pintar el lógico (horizontal) ROTADO + COVER al canvas visible ======
+  function paintLiveFromLogical(){
+    ctx.save();
+    ctx.clearRect(0,0,stage.width,stage.height);
+
+    // El canvas visible está en 9:16; dibujamos el “logical” horizontal rotado 90º para que tú lo veas horizontal dentro del display vertical
+    ctx.translate(stage.width/2, stage.height/2);
+    ctx.rotate(-Math.PI/2); // gira 90º para mostrarlo horizontal en el display vertical
+    ctx.drawImage(logical, -stage.height/2, -stage.width/2, stage.height, stage.width);
+    ctx.restore();
+  }
+
+  // ====== Mostrar en REVISIÓN (display horizontal): pintar lógico tal cual ======
+  function paintReviewFromLogical(){
+    ctx.clearRect(0,0,stage.width,stage.height);
+    ctx.drawImage(logical, 0, 0, stage.width, stage.height);
+  }
+
+  // ====== Calidad (nivel 5) ======
   function focusScore(){
     const c = document.createElement('canvas');
     c.width = 160; c.height = 90;
@@ -166,13 +201,14 @@
     let state='bad';
     if (f>35 && br>35 && br<230) state='good';
     else if (f>20 && br>25 && br<245) state='mid';
-    stageWrap.className = state;
-    if (state==='good') statusEl.textContent='✅ Enfocado y buena luz';
+    stageWrap.classList.remove('good','mid','bad');
+    stageWrap.classList.add(state);
+    if (state==='good') statusEl.textContent='✅ Enfocado y buena luz (display en vertical, contenido horizontal)';
     else if (state==='mid') statusEl.textContent='🟡 Ajusta un poco (enfoque/luz)';
     else statusEl.textContent='🔴 Borroso o con reflejos';
   }
 
-  // ---- Cámara ----
+  // ====== Cámara en vivo ======
   async function startCamera(){
     if (stream) return;
     try{
@@ -181,66 +217,82 @@
       });
       video.srcObject = stream;
       await video.play();
-      running = true;
-      statusEl.textContent='Vista previa B/N (horizontal). Captura hasta 2 imágenes.';
+      running = true; inLive = true;
+      stageWrap.classList.remove('review'); stageWrap.classList.add('live');
+      setLiveCanvasSize();
+      statusEl.textContent='Vista previa en vivo (display vertical). Gira el móvil para ver el documento horizontal.';
       loop();
     }catch(e){ console.error(e); statusEl.textContent='❌ No se pudo iniciar la cámara'; }
   }
   function stopCamera(){
     if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
-    running=false;
+    running=false; inLive=false;
   }
   function loop(){
     if (!running) return;
-    drawBWHorizontal(video);
+    // 1) Renderizamos al canvas lógico horizontal (16:9) desde el vídeo
+    renderToLogicalHorizontal(video);
+    // 2) Pintamos al display vertical rotando el lógico
+    paintLiveFromLogical();
     updateQuality();
     requestAnimationFrame(loop);
   }
 
-  // ---- Captura desde cámara (con antirrebote) ----
+  // ====== Captura desde cámara ======
   async function captureFromCamera(){
     if (shootInProgress) return;
     shootInProgress = true; shootBtn.disabled = true;
 
-    // Guardar “lo que ves” como PNG
-    const blob = await new Promise(res => stage.toBlob(res, 'image/png', 1));
+    // El lógico YA contiene el frame actual procesado en B/N. Guardamos su blob (horizontal 16:9)
+    const blob = await new Promise(res => logical.toBlob(res,'image/png',1));
     sources.push(blob);
     setCounter();
 
-    if (sources.length >= 2){
-      stopCamera();
-      statusEl.textContent='🧊 Capturas completas (2/2). Ya puedes leer OCR.';
-    } else {
-      statusEl.textContent='✅ Captura guardada (1/2). Toma otra.';
-    }
+    // Pasar a revisión horizontal mostrando exactamente lo capturado
+    stopCamera();
+    stageWrap.classList.remove('live'); stageWrap.classList.add('review');
+    setReviewCanvasSize();
+    paintReviewFromLogical();
+    statusEl.textContent = sources.length>=2
+      ? '🧊 Capturas completas (2/2). Listo para OCR.'
+      : '🧊 Captura guardada (1/2). Puedes hacer otra foto.';
 
     shootInProgress = false; shootBtn.disabled = false;
   }
 
-  // ---- Cargar desde dispositivo (usa mismo pipeline horizontal) ----
+  // ====== Cargar desde dispositivo ======
   fileInput.addEventListener('change', async e => {
     const f = e.target.files?.[0]; if (!f) return;
-    stopCamera();
+    // Renderizamos al “lógico” horizontal usando la imagen cargada
     const img = await createImageBitmap(f);
-    lastImage = img;
-    drawBWHorizontal(img);
-    const blob = await new Promise(res => stage.toBlob(res,'image/png',1));
-    sources.push(blob);
-    setCounter();
+    renderToLogicalHorizontal(img);
+    // Mostrar en revisión horizontal
+    stopCamera();
+    stageWrap.classList.remove('live'); stageWrap.classList.add('review');
+    setReviewCanvasSize();
+    paintReviewFromLogical();
+    // Guardar como captura
+    const blob = await new Promise(res => logical.toBlob(res,'image/png',1));
+    sources.push(blob); setCounter();
     statusEl.textContent='🖼️ Imagen cargada (B/N). Puedes añadir otra o leer OCR.';
     fileInput.value = '';
   });
 
-  // ---- Controles ----
-  shootBtn.addEventListener('click', async () => {
-    if (!stream) await startCamera();
-    else await captureFromCamera();
+  // ====== Controles ======
+  $('shoot').addEventListener('click', async () => {
+    if (!inLive) await startCamera(); else await captureFromCamera();
   });
-  contrast.addEventListener('input', () => { if (running) drawBWHorizontal(video); else if (lastImage) drawBWHorizontal(lastImage); });
-  brightness.addEventListener('input', () => { if (running) drawBWHorizontal(video); else if (lastImage) drawBWHorizontal(lastImage); });
+  contrast.addEventListener('input', () => {
+    if (inLive) { renderToLogicalHorizontal(video); paintLiveFromLogical(); }
+    else { paintReviewFromLogical(); } // en revisión, el lógico ya está con B/N aplicado; si quieres re-aplicar, recalcúlalo con una copia guardada
+  });
+  brightness.addEventListener('input', () => {
+    if (inLive) { renderToLogicalHorizontal(video); paintLiveFromLogical(); }
+    else { paintReviewFromLogical(); }
+  });
 
-  // ---- OCR ----
-  ocrBtn.addEventListener('click', async () => {
+  // ====== OCR ======
+  $('ocr').addEventListener('click', async () => {
     if (!sources.length) return;
     out.value = `Procesando OCR (${sources.length} imagen${sources.length>1?'es':''})…`;
     fieldsEl.textContent = '';
@@ -259,7 +311,7 @@
     fieldsEl.textContent = JSON.stringify(fused, null, 2);
   });
 
-  // ===== Parser y consenso (igual que antes) =====
+  // ====== Parser y consenso ======
   function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
   function parseDNI(text){
     const clean = norm(text);

@@ -3,42 +3,34 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Buscar imagen → EXIF OK → OCR con campos</title>
+<title>OCR DNI — Carga única, auto-OCR, campos básicos</title>
+<link rel="preconnect" href="https://unpkg.com">
 <style>
   body{margin:0;background:#f6f7f9;color:#111;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   .app{max-width:920px;margin:0 auto;padding:1rem}
   .card{background:#fff;padding:1rem;border-radius:14px;box-shadow:0 8px 34px rgba(0,0,0,.06)}
   h1{margin:.25rem 0 1rem}
   #stage{width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;display:block}
-  .toolbar{margin-top:.75rem;display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap}
-  label.btn,button{padding:.7rem 1rem;border-radius:10px;background:#111;color:#fff;cursor:pointer;border:none;font-size:1rem}
+  .toolbar{margin-top:.75rem;display:flex;justify-content:center}
+  label.btn{padding:.7rem 1rem;border-radius:10px;background:#111;color:#fff;cursor:pointer}
   label.btn input{display:none}
-  button:disabled{opacity:.55;cursor:not-allowed}
-  #status{margin-top:.5rem;text-align:center;color:#555;word-break:break-word}
+  #status{margin-top:.6rem;text-align:center;color:#555;word-break:break-word}
   textarea{width:100%;min-height:140px;margin-top:.75rem}
   pre{background:#f7f7f7;border-radius:10px;padding:.7rem;white-space:pre-wrap}
-  .row{display:flex;gap:1rem;justify-content:center;color:#555;align-items:center;margin-top:.5rem}
-  input[type=range]{width:160px}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="card">
-    <h1>Imagen (EXIF corregido) → OCR DNI</h1>
+    <h1>OCR DNI — Cargar imagen → Auto</h1>
 
     <canvas id="stage"></canvas>
-    <div id="status">Elige una foto del dispositivo. Se corregirá la orientación EXIF y se mostrará en horizontal 16:9.</div>
-
-    <div class="row">
-      <div>🌗 Contraste OCR: <input id="contrast" type="range" min="0.8" max="2.2" step="0.05" value="1.6"></div>
-      <div>🟡 Brillo OCR: <input id="brightness" type="range" min="0.7" max="1.5" step="0.05" value="1.0"></div>
-    </div>
+    <div id="status">Elige una foto del dispositivo. La normalizo a horizontal y lanzo OCR automáticamente.</div>
 
     <div class="toolbar">
       <label class="btn">🖼️ Buscar en dispositivo
         <input id="file" type="file" accept="image/*">
       </label>
-      <button id="ocr" disabled>📖 Leer OCR</button>
     </div>
 
     <h3>Texto OCR</h3>
@@ -60,170 +52,130 @@
   const ctx = stage.getContext('2d', { willReadFrequently:true });
   const statusEl = document.getElementById('status');
   const fileInput = document.getElementById('file');
-  const ocrBtn = document.getElementById('ocr');
   const out = document.getElementById('out');
   const fieldsEl = document.getElementById('fields');
   const exportEl = document.getElementById('exportArr');
-  const contrast = document.getElementById('contrast');
-  const brightness = document.getElementById('brightness');
 
-  // Canvas visible final (siempre horizontal 16:9)
-  const OUT_W = 1600, OUT_H = 900;
+  // Salida visible y para OCR: SIEMPRE horizontal 16:9
+  const OUT_W = 1800, OUT_H = 1012; // un poco más grande para letras más nítidas
   stage.width = OUT_W; stage.height = OUT_H;
 
-  // Guardamos una copia del último canvas corregido para usar en OCR
-  let lastCorrectedCanvas = null;
-
-  // ---------- EXIF ----------
-  async function readExifOrientation(file){
-    try{
-      const buf = await file.arrayBuffer();
-      const view = new DataView(buf);
-      if (view.getUint16(0,false) !== 0xFFD8) return 1; // no JPEG
-      let offset = 2;
-      while (offset < view.byteLength) {
-        const marker = view.getUint16(offset, false); offset += 2;
-        const size = view.getUint16(offset, false); offset += 2;
-        if (marker === 0xFFE1) { // APP1 (Exif)
-          if (view.getUint32(offset, false) !== 0x45786966) return 1; // "Exif"
-          const tiff = offset + 6;
-          const little = view.getUint16(tiff, false) === 0x4949;
-          const get16 = (o) => view.getUint16(tiff + o, little);
-          const get32 = (o) => view.getUint32(tiff + o, little);
-
-          const ifd0 = get32(4);
-          const entries = get16(ifd0);
-          for (let i=0;i<entries;i++){
-            const entry = ifd0 + 2 + i*12;
-            const tag = get16(entry);
-            if (tag === 0x0112){ // Orientation
-              const val = get16(entry+8);
-              return val || 1;
-            }
-          }
-          return 1;
-        } else {
-          offset += size - 2;
-        }
-      }
-    } catch(_){}
-    return 1;
-  }
-
-  function applyOrientationToCanvas(imgBitmap, orientation){
-    const sw = imgBitmap.width, sh = imgBitmap.height;
-    let cw = sw, ch = sh;
-    let rotate = 0, flipX = false, flipY = false;
-
-    // 1:0°, 2:flipX, 3:180°, 4:flipY, 5:90°+flipX, 6:90°, 7:90°+flipY, 8:270°
-    switch (orientation) {
-      case 2: flipX = true; break;
-      case 3: rotate = 180; break;
-      case 4: flipY = true; break;
-      case 5: rotate = 90; flipX = true; [cw,ch] = [sh,sw]; break;
-      case 6: rotate = 90; [cw,ch] = [sh,sw]; break;
-      case 7: rotate = 90; flipY = true; [cw,ch] = [sh,sw]; break;
-      case 8: rotate = 270; [cw,ch] = [sh,sw]; break;
-      default: break;
-    }
-
-    const c = document.createElement('canvas');
-    c.width = cw; c.height = ch;
-    const x = c.getContext('2d');
-
-    x.save();
-    if (rotate === 90) { x.translate(cw, 0); x.rotate(Math.PI/2); }
-    else if (rotate === 180) { x.translate(cw, ch); x.rotate(Math.PI); }
-    else if (rotate === 270) { x.translate(0, ch); x.rotate(3*Math.PI/2); }
-    x.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-    x.drawImage(imgBitmap, 0, 0);
-    x.restore();
-
-    return c;
-  }
-
-  function shouldApplyExif(orient, bmp){
-    if (orient === 1) return false;
-    if ((orient === 6 || orient === 8)) {
-      // si ya viene ancho>alto, probablemente el navegador aplicó EXIF
-      if (bmp.width > bmp.height) return false;
-    }
-    // 3 (180°) o flips: no cambia ratio -> aplicar
-    return true;
-  }
-
-  function drawCover16x9(srcCanvas){
-    const sw = srcCanvas.width, sh = srcCanvas.height;
-    const target = OUT_W / OUT_H, ratio = sw / sh;
-    let sx, sy, cw, ch;
-    if (ratio > target) {
-      ch = sh; cw = Math.round(sh * target);
-      sx = Math.round((sw - cw)/2); sy = 0;
-    } else {
-      cw = sw; ch = Math.round(sw / target);
-      sx = 0; sy = Math.round((sh - ch)/2);
-    }
-    ctx.clearRect(0,0,OUT_W,OUT_H);
-    ctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, OUT_W, OUT_H);
-  }
-
+  // --------- Carga & normalización a horizontal ---------
   async function loadFromFile(file){
-    statusEl.textContent = 'Cargando…';
-    const orient = await readExifOrientation(file);
-    const bmp = await createImageBitmap(file);
+    statusEl.textContent = 'Cargando imagen…';
+    const bmp = await createImageBitmap(file); // la mayoría de navegadores ya respetan EXIF
 
-    let srcCanvas;
-    if (shouldApplyExif(orient, bmp)) {
-      srcCanvas = applyOrientationToCanvas(bmp, orient);
+    // Normaliza a horizontal: si viene "alta>ancha", gira 90° a paisaje
+    const sw = bmp.width, sh = bmp.height;
+    const src = document.createElement('canvas');
+    const sctx = src.getContext('2d');
+    if (sh > sw) {
+      src.width = sh; src.height = sw;
+      sctx.translate(src.width/2, src.height/2);
+      sctx.rotate(Math.PI/2);
+      sctx.drawImage(bmp, -sw/2, -sh/2);
     } else {
-      srcCanvas = document.createElement('canvas');
-      srcCanvas.width = bmp.width; srcCanvas.height = bmp.height;
-      srcCanvas.getContext('2d').drawImage(bmp, 0, 0);
+      src.width = sw; src.height = sh;
+      sctx.drawImage(bmp, 0, 0);
     }
 
-    drawCover16x9(srcCanvas);
+    // Recorte COVER a 16:9 y pintar a canvas visible
+    drawCover16x9To(stage, src);
 
-    // guarda una copia corrigida para OCR
-    lastCorrectedCanvas = document.createElement('canvas');
-    lastCorrectedCanvas.width = OUT_W; lastCorrectedCanvas.height = OUT_H;
-    lastCorrectedCanvas.getContext('2d').drawImage(stage, 0, 0);
-
-    statusEl.textContent = `✅ Cargada (EXIF=${orient}). Lista para OCR.`;
-    ocrBtn.disabled = false;
+    statusEl.textContent = '✅ Imagen lista. Ejecutando OCR…';
+    await doOCR(); // auto
   }
 
-  fileInput.addEventListener('change', async (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    try { await loadFromFile(f); }
-    catch(err){ console.error(err); statusEl.textContent='❌ Error cargando la imagen.'; }
-    finally { e.target.value=''; }
-  });
+  function drawCover16x9To(targetCanvas, srcCanvas){
+    const tw = targetCanvas.width, th = targetCanvas.height;
+    const tctx = targetCanvas.getContext('2d');
 
-  // ---------- OCR ----------
+    const sw = srcCanvas.width, sh = srcCanvas.height;
+    const target = tw/th, ratio = sw/sh;
+    let sx, sy, cw, ch;
+    if (ratio > target) { ch = sh; cw = Math.round(sh * target); sx = Math.round((sw - cw)/2); sy = 0; }
+    else { cw = sw; ch = Math.round(sw / target); sx = 0; sy = Math.round((sh - ch)/2); }
+
+    tctx.clearRect(0,0,tw,th);
+    tctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, tw, th);
+  }
+
+  // --------- Preprocesado “fino” para OCR (auto) ---------
   function buildOCRInput(){
-    // Hacemos B/N + contraste/brillo SOLO para el OCR
+    // Copia del canvas visible → B/N (Otsu) + unsharp leve
     const c = document.createElement('canvas');
     c.width = OUT_W; c.height = OUT_H;
     const x = c.getContext('2d', { willReadFrequently:true });
-    x.drawImage(lastCorrectedCanvas, 0, 0);
+    x.drawImage(stage, 0, 0);
 
-    const data = x.getImageData(0,0,OUT_W,OUT_H);
-    const d = data.data;
-    const cst = parseFloat(contrast.value);
-    const brt = parseFloat(brightness.value);
-    for (let i=0;i<d.length;i+=4){
-      let g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-      g = g * cst * brt; g = g<0?0:g>255?255:g;
-      d[i]=d[i+1]=d[i+2]=g; d[i+3]=255;
+    // Gris
+    let img = x.getImageData(0,0,OUT_W,OUT_H);
+    let d = img.data;
+    const gray = new Uint8ClampedArray(OUT_W*OUT_H);
+    for (let i=0,j=0;i<d.length;i+=4,j++){
+      gray[j] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
     }
-    x.putImageData(data,0,0);
+
+    // Otsu threshold
+    const thr = otsu(gray, OUT_W, OUT_H);
+    for (let j=0,i=0;j<gray.length;j++,i+=4){
+      const v = gray[j] > thr ? 255 : 0;
+      d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
+    }
+    x.putImageData(img,0,0);
+
+    // Unsharp mask muy suave (3x3)
+    unsharp(x, OUT_W, OUT_H);
+
     return c;
   }
 
+  function otsu(gray, w, h){
+    const hist = new Uint32Array(256);
+    let sum = 0, total = gray.length;
+    for (let i=0;i<total;i++){ hist[gray[i]]++; sum += gray[i]; }
+    let sumB=0, wB=0, wF=0, mB=0, mF=0, varMax=0, threshold=127;
+    for (let t=0;t<256;t++){
+      wB += hist[t]; if (wB===0) continue;
+      wF = total - wB; if (wF===0) break;
+      sumB += t*hist[t];
+      mB = sumB / wB;
+      mF = (sum - sumB) / wF;
+      const between = wB*wF*(mB-mF)*(mB-mF);
+      if (between > varMax){ varMax = between; threshold = t; }
+    }
+    return threshold;
+  }
+
+  function unsharp(ctx, w, h){
+    const src = ctx.getImageData(0,0,w,h);
+    const dst = ctx.createImageData(w,h);
+    const s = src.data, d = dst.data;
+    // kernel sharpening: [0,-1,0; -1,5,-1; 0,-1,0]
+    const idx = (x,y)=> (y*w + x) * 4;
+    for (let y=1;y<h-1;y++){
+      for (let x=1;x<w-1;x++){
+        let acc=0;
+        const i = idx(x,y);
+        acc += - s[idx(x, y-1)]; // up
+        acc += - s[idx(x-1,y)];  // left
+        acc += 5 * s[i];         // center
+        acc += - s[idx(x+1,y)];  // right
+        acc += - s[idx(x, y+1)]; // down
+        const v = Math.max(0, Math.min(255, acc));
+        d[i]=d[i+1]=d[i+2]=v; d[i+3]=255;
+      }
+    }
+    ctx.putImageData(dst,0,0);
+  }
+
+  // --------- OCR + PARSER ---------
   function norm(s){ return (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim().toUpperCase(); }
 
-  function parseDNI(text){
+  function parseFields(text){
     const clean = norm(text);
+    const now = new Date(); const thisYear = now.getFullYear(); const minYear = thisYear - 100;
+
     const out = {
       "Nombre": "",
       "APELLIDOS": "",
@@ -237,35 +189,27 @@
       "DOMICILIO": ""
     };
 
-    // Nº de documento
+    // Nº DOCUMENTO: 8 dígitos + letra
     const mDni = clean.match(/\b\d{8}[A-Z]\b/);
     if (mDni) out["NºDOCUMENTO"] = mDni[0];
 
-    // Etiquetas típicas
-    const lines = clean.split(/\n| {2,}/);
-    for (let i=0;i<lines.length;i++){
-      const L = lines[i];
-      if (L.includes("APELLID")) out["APELLIDOS"] = (lines[i+1]||"").split(' ').slice(0,4).join(' ').trim();
-      if (L.includes("NOMBRE"))  out["Nombre"]    = (lines[i+1]||"").split(' ').slice(0,3).join(' ').trim();
-      if (L.includes("SEXO") && L.includes("NACION")){
-        // siguiente línea suele tener M/F + ESP + fecha
-        const nxt = (lines[i+1]||'');
-        const mS = nxt.match(/\b[MF]\b/); if (mS) out["SEXO"]=mS[0];
-        const mN = nxt.match(/\b[A-Z]{3}\b/); if (mN) out["NACIONALIDAD"]=mN[0];
-        const mF = nxt.match(/\b(\d{1,2})[\/.\-\s](\d{1,2})[\/.\-\s](\d{2,4})\b/);
-        if (mF){ const dd=mF[1].padStart(2,'0'), mm=mF[2].padStart(2,'0'); const yy=mF[3].length===2?('19'+mF[3]):mF[3]; out["FECHA DE NACIMIENTO"]=`${dd}/${mm}/${yy}`; }
+    // FECHA DE NACIMIENTO: dd mm aaaa con año [thisYear-100, thisYear]
+    // Permitimos separadores espacios, /, ., -
+    const fechas = [...clean.matchAll(/\b(\d{1,2})[\/\.\-\s](\d{1,2})[\/\.\-\s](\d{4})\b/g)];
+    for (const f of fechas) {
+      const d = parseInt(f[1],10), m = parseInt(f[2],10), y = parseInt(f[3],10);
+      if (y>=minYear && y<=thisYear && d>=1 && d<=31 && m>=1 && m<=12) {
+        const dd = String(d).padStart(2,'0'), mm = String(m).padStart(2,'0');
+        out["FECHA DE NACIMIENTO"] = `${dd}/${mm}/${y}`;
+        break;
       }
     }
 
-    // Si hay dos apellidos en líneas separadas ya los juntamos arriba; si no, intenta fallback por bloque título
-    if (!out["APELLIDOS"]){
-      const apBlock = clean.match(/APELLID[^\n]*\n([A-ZÁÉÍÓÚÜÑ' -]+)\n?([A-ZÁÉÍÓÚÜÑ' -]+)?/);
-      if (apBlock){
-        const a1=(apBlock[1]||'').trim(), a2=(apBlock[2]||'').trim();
-        out["APELLIDOS"]=[a1,a2].filter(Boolean).join(' ');
-      }
-    }
+    // SEXO: M/F → Masculino/Femenino
+    const mSex = clean.match(/\b([MF])\b/);
+    if (mSex) out["SEXO"] = (mSex[1] === 'M') ? 'Masculino' : 'Femenino';
 
+    // El resto (Nombre/Apellidos…) lo dejamos vacío por ahora
     return out;
   }
 
@@ -286,28 +230,39 @@
     ];
   }
 
-  document.getElementById('ocr').addEventListener('click', async () => {
-    if (!lastCorrectedCanvas) return;
-    out.value = 'Procesando OCR…';
-    fieldsEl.textContent = ''; exportEl.textContent = '';
+  async function doOCR(){
+    try{
+      const inputCanvas = buildOCRInput();
+      const blob = await new Promise(res => inputCanvas.toBlob(res,'image/png',1));
 
-    const inputCanvas = buildOCRInput();
-    const blob = await new Promise(res => inputCanvas.toBlob(res,'image/png',1));
+      const worker = await Tesseract.createWorker('spa', 1, {
+        logger: m => console.log(m)
+      });
+      // PSM 6 suele ir bien para bloques uniformes
+      await worker.setParameters({ tessedit_pageseg_mode: 6 });
+      const { data } = await worker.recognize(blob);
+      await worker.terminate();
 
-    const worker = await Tesseract.createWorker('spa', 1, { logger: m => console.log(m) });
-    const { data } = await worker.recognize(blob);
-    await worker.terminate();
+      const text = (data.text || '').trim();
+      out.value = text;
 
-    const text = (data.text||'').trim();
-    out.value = text;
+      const parsed = parseFields(text);
+      fieldsEl.textContent = JSON.stringify(parsed, null, 2);
+      exportEl.textContent = JSON.stringify(buildExportArray(parsed), null, 2);
 
-    const parsed = parseDNI(text);
-    fieldsEl.textContent = JSON.stringify(parsed, null, 2);
+      statusEl.textContent = '✅ OCR completado.';
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = '❌ Error durante OCR.';
+    }
+  }
 
-    const arr = buildExportArray(parsed);
-    exportEl.textContent = JSON.stringify(arr, null, 2);
-
-    statusEl.textContent = '✅ OCR completado.';
+  // --------- Eventos ---------
+  fileInput.addEventListener('change', async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    try { await loadFromFile(f); }
+    catch(err){ console.error(err); statusEl.textContent='❌ Error cargando la imagen.'; }
+    finally { e.target.value=''; }
   });
 })();
 </script>

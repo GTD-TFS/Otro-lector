@@ -7,20 +7,19 @@ export class SmartCamera {
     this.stream = null;
     this.focusTimer = null;
     this.goodCount = 0;
-    this.onReadyToCapture = null; // (blob) => {}
-    this.onAutoBatchReady = null; // (blobs[]) => {}
+    this.onReadyToCapture = null;   // (blob) => {}
+    this.onAutoBatchReady = null;   // (blobs[]) => {}
     this.track = null;
     this.torchEnabled = false;
 
-    // Auto-consenso
+    // Lote por “verdes” distintos
     this.autoCollecting = false;
     this.collected = [];
     this.hashes = [];
-    this.orientSamples = [];
-    this.lastGreenAt = 0;
-    this.cooldownMs = 800; // no capturar "verde" más de 1 vez por ~0.8s
+    this.cooldownMs = 800;
     this.targetCount = 5;
     this.timeoutId = null;
+    this.lastGreenAt = 0;
 
     // Orientación (si existe)
     this.lastDeviceOrientation = null;
@@ -39,7 +38,7 @@ export class SmartCamera {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          aspectRatio: { ideal: 1.777 } // 16:9 horizontal
+          aspectRatio: { ideal: 1.777 } // 16:9
         }
       });
       this.video.srcObject = this.stream;
@@ -57,57 +56,87 @@ export class SmartCamera {
     if (!this.track) return;
     try {
       const caps = this.track.getCapabilities?.() || {};
-      if (!caps.torch) {
-        this.msg.textContent = "💡 Linterna no disponible";
-        return;
-      }
+      if (!caps.torch) { this.msg.textContent = "💡 Linterna no disponible"; return; }
       this.torchEnabled = !this.torchEnabled;
       await this.track.applyConstraints({ advanced: [{ torch: this.torchEnabled }] });
       this.msg.textContent = this.torchEnabled ? "💡 Linterna encendida" : "💡 Linterna apagada";
-    } catch (err) {
-      console.warn("No se pudo cambiar la linterna:", err);
-    }
+    } catch (err) { console.warn("No se pudo cambiar la linterna:", err); }
   }
 
   stop() {
     this.active = false;
-    if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
-      this.stream = null;
-    }
-    if (this.focusTimer) {
-      clearInterval(this.focusTimer);
-      this.focusTimer = null;
-    }
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
-    }
+    if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
+    if (this.focusTimer) { clearInterval(this.focusTimer); this.focusTimer = null; }
+    if (this.timeoutId) { clearTimeout(this.timeoutId); this.timeoutId = null; }
     this.autoCollecting = false;
-    this.collected = [];
-    this.hashes = [];
-    this.orientSamples = [];
+    this.collected = []; this.hashes = [];
     this.container.className = 'bad';
     this.msg.textContent = 'Cámara detenida';
   }
 
-  // === Auto-consenso: iniciar recolección hasta N distintas o timeoutMs ===
+  // ====== Núcleo de captura ======
+  getCaptureCanvas() {
+    // Siempre devolvemos un canvas 16:9 horizontal recortando el frame
+    const vw = this.video.videoWidth;
+    const vh = this.video.videoHeight;
+    if (!vw || !vh) return null;
+
+    // Fuente: frame original (sin rotaciones artificiales)
+    // Calculamos un recorte “cover” a 16:9
+    const targetRatio = 16 / 9;
+    const srcRatio = vw / vh;
+
+    let sx, sy, sw, sh;
+    if (srcRatio > targetRatio) {
+      // sobra ancho -> recortamos laterales
+      sh = vh;
+      sw = Math.round(vh * targetRatio);
+      sx = Math.round((vw - sw) / 2);
+      sy = 0;
+    } else {
+      // sobra alto -> recortamos arriba/abajo
+      sw = vw;
+      sh = Math.round(vw / targetRatio);
+      sx = 0;
+      sy = Math.round((vh - sh) / 2);
+    }
+
+    const outW = 1600, outH = 900; // salida nítida para OCR
+    const c = document.createElement('canvas');
+    c.width = outW; c.height = outH;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(this.video, sx, sy, sw, sh, 0, 0, outW, outH);
+    return c;
+  }
+
+  capture(cb) {
+    const c = this.getCaptureCanvas();
+    if (!c) return;
+    this.preprocess(c.getContext('2d'), c.width, c.height);
+    const hash = this.dhash(c, 8);
+    c.toBlob(b => cb && cb(b, hash), 'image/jpeg', 0.9);
+  }
+
+  manualCapture() {
+    if (!this.active) return;
+    this.msg.textContent = '📸 Captura manual';
+    this.capture((blob) => this.onReadyToCapture && this.onReadyToCapture(blob));
+  }
+
+  // ====== Auto-consenso ======
   startAutoConsensus(n = 5, timeoutMs = 15000) {
     this.targetCount = n;
     this.collected = [];
     this.hashes = [];
-    this.orientSamples = [];
     this.autoCollecting = true;
     if (this.timeoutId) clearTimeout(this.timeoutId);
-    this.timeoutId = setTimeout(() => {
-      this.finishAutoConsensus();
-    }, timeoutMs);
+    this.timeoutId = setTimeout(() => this.finishAutoConsensus(), timeoutMs);
     this.msg.textContent = `⏳ Buscando ${n} capturas distintas…`;
   }
   finishAutoConsensus() {
     this.autoCollecting = false;
     if (this.timeoutId) { clearTimeout(this.timeoutId); this.timeoutId = null; }
-    if (this.onAutoBatchReady) this.onAutoBatchReady(this.collected.slice());
+    this.onAutoBatchReady && this.onAutoBatchReady(this.collected.slice());
     this.msg.textContent = `📦 Lote listo: ${this.collected.length} imágenes`;
   }
 
@@ -118,7 +147,7 @@ export class SmartCamera {
       const score = this.focusScore();
       const brightness = this.brightnessScore();
 
-      // Exigencia 5–6
+      // Nivel 5–6
       let state = 'bad';
       if (score > 35 && brightness > 35 && brightness < 230) state = 'good';
       else if (score > 20 && brightness > 25 && brightness < 245) state = 'mid';
@@ -127,95 +156,45 @@ export class SmartCamera {
       this.container.className = state;
 
       if (state === 'good') {
-        this.msg.textContent = this.autoCollecting ? '✅ Buen frame (buscando diversidad)…' : '✅ Enfocado y buena luz';
+        this.msg.textContent = this.autoCollecting ? `✅ Buen frame (distintos: ${this.collected.length}/${this.targetCount})` : '✅ Enfocado y buena luz';
         this.goodCount++;
-      } else if (state === 'mid') {
-        this.msg.textContent = '🟡 Ajusta un poco (enfoque/luz)';
-        this.goodCount = 0;
-      } else {
-        this.msg.textContent = '🔴 Borroso o reflejos';
-        this.goodCount = 0;
-      }
+      } else if (state === 'mid') { this.msg.textContent = '🟡 Ajusta un poco (enfoque/luz)'; this.goodCount = 0; }
+      else { this.msg.textContent = '🔴 Borroso o reflejos'; this.goodCount = 0; }
 
-      // Auto-captura (normal)
+      // Captura única automática
       if (!this.autoCollecting && this.goodCount >= 3) {
         this.goodCount = 0;
-        this.capture((blob) => this.onReadyToCapture && this.onReadyToCapture(blob));
+        this.capture(blob => this.onReadyToCapture && this.onReadyToCapture(blob));
       }
 
-      // Auto-consenso: capturar solo cuando hay buen frame y diversidad
+      // Modo lote: captura solo si aporta diversidad
       if (this.autoCollecting && this.goodCount >= 2) {
         const now = Date.now();
         if (now - this.lastGreenAt < this.cooldownMs) return;
         this.lastGreenAt = now;
-        // Evaluar diversidad y, si cumple, agregar
-        this.capture(async (blob, hash) => {
-          const diverse = this.isDiverse(hash, this.lastDeviceOrientation);
-          if (diverse) {
+
+        this.capture((blob, hash) => {
+          if (this.isDiverse(hash)) {
             this.collected.push(blob);
             this.hashes.push(hash);
-            if (this.lastDeviceOrientation) this.orientSamples.push(this.lastDeviceOrientation);
             this.msg.textContent = `✅ Captura distinta (${this.collected.length}/${this.targetCount})`;
-            if (this.collected.length >= this.targetCount) {
-              this.finishAutoConsensus();
-            }
+            if (this.collected.length >= this.targetCount) this.finishAutoConsensus();
           } else {
-            this.msg.textContent = '↩️ Captura descartada (demasiado similar)';
+            this.msg.textContent = '↩️ Descartada (muy similar)';
           }
         });
       }
     }, 300);
   }
 
-  manualCapture() {
-    if (!this.active) return;
-    this.msg.textContent = '📸 Captura manual';
-    this.capture((blob) => this.onReadyToCapture && this.onReadyToCapture(blob));
-  }
-
-  // Captura con giro a horizontal + preprocesado + dHash
-  capture(cb) {
-    const vw = this.video.videoWidth;
-    const vh = this.video.videoHeight;
-
-    let c = document.createElement('canvas');
-    let ctx = null;
-
-    if (vh > vw) { // rotar 90º
-      c.width = vh; c.height = vw;
-      ctx = c.getContext('2d');
-      ctx.translate(c.width / 2, c.height / 2);
-      ctx.rotate(Math.PI / 2);
-      ctx.drawImage(this.video, -vw / 2, -vh / 2);
-    } else {
-      c.width = vw; c.height = vh;
-      ctx = c.getContext('2d');
-      ctx.drawImage(this.video, 0, 0);
-    }
-
-    this.preprocess(ctx, c.width, c.height);
-    const hash = this.dhash(c, 8); // 8x8 -> 64 bits
-    c.toBlob(b => cb && cb(b, hash), 'image/jpeg', 0.9);
-  }
-
-  // Diversidad: Hamming(dHash) >= 12 y, si hay orientación, delta >= 3°
-  isDiverse(newHash, orient) {
-    if (!newHash) return true;
+  // ====== diversidad por dHash ======
+  isDiverse(newHash) {
+    if (!newHash || !this.hashes.length) return true;
     for (const old of this.hashes) {
-      if (this.hamming(old, newHash) < 12) return false;
-    }
-    if (orient && this.orientSamples.length) {
-      const last = this.orientSamples[this.orientSamples.length - 1];
-      const delta = (a, b) => Math.abs((a||0) - (b||0));
-      if (Math.max(delta(orient.alpha, last.alpha), delta(orient.beta, last.beta), delta(orient.gamma, last.gamma)) < 3) {
-        // muy parecida en orientación
-        return false;
-      }
+      if (this.hamming(old, newHash) < 12) return false; // distancia mínima
     }
     return true;
   }
-
-  // dHash perceptual (grayscale, 9x8 -> compara adyacentes en X, devuelve string bits)
   dhash(canvas, size=8) {
     const w = size + 1, h = size;
     const c = document.createElement('canvas');
@@ -230,19 +209,15 @@ export class SmartCamera {
     let bits = '';
     for (let y=0;y<h;y++){
       for (let x=0;x<size;x++){
-        const i1 = y*w + x;
-        const i2 = y*w + x + 1;
+        const i1 = y*w + x, i2 = y*w + x + 1;
         bits += gray[i1] > gray[i2] ? '1' : '0';
       }
     }
     return bits;
   }
+  hamming(a,b){ let d=0; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) d++; return d; }
 
-  hamming(a,b){
-    let d=0; for (let i=0;i<a.length;i++){ if (a[i]!==b[i]) d++; } return d;
-  }
-
-  // ---- Detección de enfoque (variance-like) ----
+  // ====== enfoque / brillo ======
   focusScore() {
     const c = document.createElement('canvas');
     c.width = 160; c.height = 90;
@@ -251,52 +226,38 @@ export class SmartCamera {
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
 
     const gray = new Float32Array(c.width * c.height);
-    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-      gray[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    }
+    for (let i=0,j=0;i<d.length;i+=4,j++) gray[j] = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
 
-    let mean = 0;
-    for (const g of gray) mean += g;
-    mean /= gray.length;
-
-    let variance = 0;
-    for (const g of gray) variance += (g - mean) ** 2;
-    variance /= gray.length;
-
-    return variance / 100;
+    let mean=0; for(const g of gray) mean+=g; mean/=gray.length;
+    let variance=0; for(const g of gray) variance += (g-mean)**2; variance/=gray.length;
+    return variance/100;
   }
-
-  // ---- Brillo global ----
   brightnessScore() {
     const c = document.createElement('canvas');
     c.width = 64; c.height = 36;
     const ctx = c.getContext('2d');
     ctx.drawImage(this.video, 0, 0, c.width, c.height);
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
-    let sum = 0, n = d.length / 4;
-    for (let i = 0; i < d.length; i += 4) {
-      sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    }
-    return sum / n; // 0..255
+    let sum=0, n=d.length/4;
+    for (let i=0;i<d.length;i+=4) sum += 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    return sum/n; // 0..255
   }
 
-  // ---- Preprocesado: gris + estirado de contraste ----
+  // ====== preprocesado: gris + estirado contraste ======
   preprocess(ctx, w, h) {
     const img = ctx.getImageData(0, 0, w, h);
     const d = img.data;
-    let min = 255, max = 0;
-    const gray = new Uint8Array(w * h);
-
-    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-      const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      gray[j] = g; if (g < min) min = g; if (g > max) max = g;
+    let min=255, max=0;
+    const gray = new Uint8Array(w*h);
+    for (let i=0,j=0;i<d.length;i+=4,j++){
+      const g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+      gray[j]=g; if(g<min)min=g; if(g>max)max=g;
     }
-    const range = max - min || 1;
-    for (let j = 0; j < gray.length; j++) {
-      const v = ((gray[j] - min) * 255) / range;
-      const k = j * 4;
-      d[k] = d[k + 1] = d[k + 2] = v;
+    const range = max-min || 1;
+    for (let j=0;j<gray.length;j++){
+      const v = ((gray[j]-min)*255)/range;
+      const k=j*4; d[k]=d[k+1]=d[k+2]=v;
     }
-    ctx.putImageData(img, 0, 0);
+    ctx.putImageData(img,0,0);
   }
 }

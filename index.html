@@ -92,7 +92,190 @@
     </div>
   </div>
 </div>
+<!-- ===== PARCHE V6 MRZ & CAMPOS (pegar antes del último <script>) ===== -->
+<script>
+(function(){
+  // Utilidades de este parche (no interfieren con las tuyas)
+  const _clean = s => (s||"").normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
+  const _collapse = s => (s||"").replace(/\s+/g,' ').trim();
+  const _tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, c=>c.toUpperCase());
 
+  // Reconstruye MRZ virtual cuando L1+L2+L3 vienen en una sola línea
+  function splitMRZVirtual(ocrText){
+    const txt = _clean(ocrText).replace(/\n+/g,' ').replace(/\s+/g,' ');
+    // L3: tomar el último '<<' como separador apellidos<<nombres
+    const l3m = txt.match(/([A-Z<]{2,}?)<<([A-Z<]{2,}?)(?:<+|$)/);
+    let vL3 = "";
+    if(l3m){
+      // construimos solo la parte APELLIDOS<<NOMBRES
+      vL3 = (l3m[1] + '<<' + l3m[2]).replace(/[^A-Z<]/g,'');
+    }
+    // L1: primer patrón "8 dígitos + letra" inmediatamente antes de <<"
+    const l1m = txt.match(/([0-9]{8}[A-Z])<</);
+    const vL1 = l1m ? (l1m[1] + '<<') : "";
+
+    // L2: YYMMDD + sexo + ... + nacionalidad (3 letras)
+    const l2m = txt.match(/([0-9]{2})([0-9]{2})([0-9]{2})([MF])[A-Z0-9<]*?([A-Z]{3})/);
+    const vL2 = l2m ? { yy:l2m[1], mm:l2m[2], dd:l2m[3], sx:l2m[4], nat:l2m[5] } : null;
+
+    return { vL1, vL2, vL3 };
+  }
+
+  // DNI estricto (8 dígitos + letra) desde L1 virtual
+  function dniFromL1Virtual(L1){
+    if(!L1) return "";
+    const j = L1.indexOf("<<");
+    if(j<9) return "";
+    const cand = L1.slice(j-9, j);
+    return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
+  }
+
+  // Nombre y apellidos desde L3 virtual: APELLIDOS<<NOMBRES (sin filtrar palabras duplicadas)
+  function namesFromL3Virtual(L3){
+    if(!L3 || !L3.includes("<<")) return { nombre:"", apellidos:"" };
+    const i = L3.lastIndexOf("<<"); // el último por robustez
+    const ap = L3.slice(0,i).replace(/<+/g,' ').trim();
+    const nm = L3.slice(i+2).replace(/<+/g,' ').trim();
+    return { nombre: _tcase(nm), apellidos: ap.toUpperCase() };
+  }
+
+  // Fecha y sexo desde L2 virtual
+  function dateSexNatFromL2Virtual(L2){
+    if(!L2) return { fecha:"", sexo:"", nac:"" };
+    const yy = +L2.yy, mm=L2.mm, dd=L2.dd;
+    const year = yy >= 30 ? 1900 + yy : 2000 + yy;
+    return {
+      fecha: `${dd}/${mm}/${year}`,
+      sexo: L2.sx === "F" ? "FEMENINO" : "MASCULINO",
+      nac:  L2.nat === "ESP" ? "España" : L2.nat
+    };
+  }
+
+  // Domicilio fallback: acepta bloque de 1 sola línea (entre "DOMICILIO" y "EQUIPO"/MRZ)
+  function domicilioFallback(ocrText){
+    const lines = _clean(ocrText).split('\n').map(s=>s.trim()).filter(Boolean);
+    const U = lines.map(s=>s.toUpperCase());
+    const start = U.findIndex(l => /(DOMI|COMI|DIREC|CALLE|AVDA|DOMIC)/.test(l));
+    if(start < 0) return "";
+    const out = [];
+    for(let k=start+1;k<lines.length;k++){
+      const L = U[k];
+      if (/EQUIPO/.test(L)) break;
+      if (/<{2,}/.test(L)) break; // MRZ corta
+      if (!lines[k].trim()) continue;
+      // descarta códigos tipo 28391A6DK aislados
+      if (/^[A-Z0-9]{6,}$/.test(L)) continue;
+      out.push(lines[k]);
+      if(out.length >= 3) break;
+    }
+    if(!out.length) return "";
+    // permitimos 1 sola línea
+    const uniq = [...new Set(out.map(s=>s.trim()))];
+    return _tcase(_collapse(uniq.join(', ')));
+  }
+
+  // Padres fallback si quedó "X y"
+  function padresFallback(ocrText){
+    const lines = _clean(ocrText).split('\n').map(s=>s.trim()).filter(Boolean);
+    const U = lines.map(s=>s.toUpperCase());
+    const i = U.findIndex(l => /(HIJ|HIO|MADRE|PADRE|PROGEN|REPRES|PADRES)/.test(l));
+    if(i < 0) return "";
+    const take = [];
+    // inline tras encabezado
+    const inline = lines[i].replace(/.*?(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|REPRES|PADRES)\s*/i,'').trim();
+    if(inline) take.push(inline);
+    // dos líneas siguientes
+    for(let k=i+1;k<Math.min(lines.length, i+3);k++){
+      const L = U[k];
+      if (/<{2,}/.test(L)) break;
+      if (/(DOMI|LUGAR|EQUIPO)/.test(L)) break;
+      if (/^[A-Z0-9]{6,}$/.test(L)) continue;
+      if(lines[k]) take.push(lines[k]);
+    }
+    const flat = take.join(' / ');
+    const parts = flat.split(/[\/,;]+/).map(s=>_collapse(s)).filter(Boolean).map(_tcase);
+    if(!parts.length) return "";
+    if(parts.length === 1) return parts[0] + " y";
+    return `${parts[0]} y ${parts[1]}`;
+  }
+
+  // Post-parche: se ejecuta tras tu análisis y corrige solo lo roto
+  window.addEventListener('load', function(){
+    const btn = document.getElementById('analyze');
+    if(!btn) return;
+    btn.addEventListener('click', function(){
+      setTimeout(function(){
+        const ocrEl = document.getElementById('ocr');
+        if(!ocrEl) return;
+        const txt = ocrEl.value || "";
+        const vt = splitMRZVirtual(txt);
+
+        // Campos DOM
+        const Nombre      = document.getElementById('Nombre');
+        const Apellidos   = document.getElementById('Apellidos');
+        const Tipo        = document.getElementById('Tipo');
+        const Numero      = document.getElementById('Numero');
+        const Sexo        = document.getElementById('Sexo');
+        const Nacionalidad= document.getElementById('Nacionalidad');
+        const Nacimiento  = document.getElementById('Nacimiento');
+        const Lugar       = document.getElementById('Lugar');
+        const Domicilio   = document.getElementById('Domicilio');
+        const Padres      = document.getElementById('Padres');
+
+        // 1) MRZ nombres/apellidos si están mal (apellidos vacíos o nombre con dígitos/ESP/churros)
+        const badNombre = /\d/.test(Nombre.value) || /ESPANOLA|IDESP|ESP</i.test(Nombre.value || "");
+        if((!Apellidos.value || badNombre) && vt.vL3){
+          const np = namesFromL3Virtual(vt.vL3);
+          if(np.apellidos) Apellidos.value = np.apellidos;
+          if(np.nombre)    Nombre.value    = np.nombre;
+        }
+
+        // 2) DNI si falta o parece inconsistente
+        if((!Numero.value || !/^[0-9]{8}[A-Z]$/.test(Numero.value)) && vt.vL1){
+          const dni = dniFromL1Virtual(vt.vL1);
+          if(dni){
+            Numero.value = dni;
+            if(!Tipo.value) Tipo.value = "DNI";
+          }
+        }
+
+        // 3) Fecha/Sexo/Nacionalidad desde L2 virtual si las actuales están vacías o raras
+        if(vt.vL2){
+          if(!Nacimiento.value || !/^\d{2}\/\d{2}\/\d{4}$/.test(Nacimiento.value)){
+            const ds = dateSexNatFromL2Virtual(vt.vL2);
+            if(ds.fecha) Nacimiento.value = ds.fecha;
+            if(ds.sexo && !Sexo.value) Sexo.value = ds.sexo;
+            if(ds.nac  && !Nacionalidad.value) Nacionalidad.value = ds.nac;
+          }
+        }
+
+        // 4) Domicilio fallback (aceptar 1 sola línea válida)
+        if(!Domicilio.value){
+          const dom = domicilioFallback(txt);
+          if(dom) Domicilio.value = dom;
+        }
+
+        // 5) Padres “X y” → completar si hay segundo
+        if(/ y$/.test((Padres.value||"").trim())){
+          const pf = padresFallback(txt);
+          if(pf && / y /.test(pf)) Padres.value = pf;
+        }
+
+        // 6) Validación visual fina si tu HTML ya la tiene
+        ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
+          .forEach(id=>{
+            const el = document.getElementById(id);
+            if(!el) return;
+            const ok = !!(el.value && el.value.trim());
+            el.classList.toggle("valid", ok);
+            el.classList.toggle("invalid", !ok);
+          });
+      }, 0); // ejecuta después de tu handler original
+    });
+  });
+})();
+</script>
+<!-- ===== FIN PARCHE V6 ===== -->
 <script>
 // ===== Utilidades de limpieza y formato =====
 const clean = s => s.normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');

@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>DILIPOL · Filiación · OCR → JSON</title>
   <style>
     :root{
@@ -11,74 +11,59 @@
       --green:#22c57b; --red:#ff5656;
     }
     *{box-sizing:border-box}
-    body{
-      margin:0;padding:20px;font-family:system-ui,"Segoe UI",Arial;
-      color:var(--fg);background:#0b1220;
-    }
+    body{margin:0;padding:20px;font-family:system-ui,"Segoe UI",Arial;color:var(--fg);background:#0b1220}
     h1{margin:0 0 14px;font-size:20px}
     .grid{display:grid;gap:16px}
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
-    .card{
-      background:var(--card);border:1px solid var(--border);
-      border-radius:14px;padding:16px;backdrop-filter:blur(10px);
-    }
-    textarea{
-      width:100%;height:32vh;padding:10px;background:rgba(255,255,255,.05);
-      color:var(--fg);border-radius:12px;border:1px solid var(--border);
-      font-family:ui-monospace,monospace;
-    }
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;backdrop-filter:blur(10px)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
+    .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
     .fields{display:grid;gap:12px;grid-template-columns:1fr}
     @media(min-width:760px){.fields{grid-template-columns:1fr 1fr}}
     label{font-size:12px;margin-bottom:4px;color:#cfe0ff}
     input,select{
-      width:100%;padding:10px;border-radius:12px;
-      background:rgba(10,16,28,.45);color:var(--fg);
-      border:1px solid var(--border);outline:none;
-      transition:border-color .15s;
+      width:100%;padding:10px;border-radius:12px;background:rgba(10,16,28,.45);
+      color:var(--fg);border:1px solid var(--border);outline:none;transition:border-color .15s
     }
+    /* bordes finos */
     input.valid,select.valid{border-color:var(--green)!important}
     input.invalid,select.invalid{border-color:var(--red)!important}
     .span2{grid-column:1/-1}
-    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-    .btn{
-      border:1px solid var(--accent);color:var(--fg);
-      background:rgba(77,163,255,.15);padding:10px 14px;
-      border-radius:12px;cursor:pointer;
-    }
-    .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
     .mono{font-size:12px}
+    .hint{font-size:12px;color:#bcd0f0}
   </style>
 </head>
 <body>
-
 <h1>DILIPOL · Filiación · OCR → JSON</h1>
-<div class="grid two">
 
+<div class="grid two">
+  <!-- ACCIONES -->
   <div class="card">
-    <textarea id="ocr" placeholder="Pega aquí el texto OCR…"></textarea>
     <div class="row">
-      <button class="btn" id="pasteClipboard">Pegar</button>
+      <button class="btn" id="readAnalyze">Pegar del portapapeles y analizar</button>
       <button class="btn secondary" id="clear">Limpiar</button>
-      <button class="btn" id="analyze">Analizar</button>
     </div>
+    <div class="row hint">No se muestra el OCR. Se lee del portapapeles, se analiza y se rellenan los campos.</div>
   </div>
 
+  <!-- CAMPOS -->
   <div class="card">
     <div class="fields">
       <div><label>Nombre</label><input id="Nombre"></div>
-      <div><label>Apellidos</label><input id="Apellidos"></div>
-      <div><label>Tipo doc.</label><input id="Tipo"></div>
+      <div><label>Apellidos (MAYÚSCULAS)</label><input id="Apellidos"></div>
+      <div><label>Tipo de documento</label><input id="Tipo" placeholder="DNI / NIE / PASAPORTE"></div>
       <div><label>Nº documento</label><input id="Numero"></div>
       <div><label>Sexo</label>
         <select id="Sexo"><option></option><option>MASCULINO</option><option>FEMENINO</option></select>
       </div>
-      <div><label>Nacionalidad</label><input id="Nacionalidad"></div>
-      <div class="span2"><label>Padres</label><input id="Padres" placeholder="Juan y Victoria"></div>
-      <div><label>F. nacimiento</label><input id="Nacimiento" placeholder="dd/mm/aaaa"></div>
-      <div><label>Lugar nacimiento</label><input id="Lugar"></div>
+      <div><label>Nacionalidad</label><input id="Nacionalidad" placeholder="España / ESP / ..."></div>
+      <div class="span2"><label>Nombre de los Padres (Nombre1 y Nombre2)</label><input id="Padres" placeholder="Juan y Victoria"></div>
+      <div><label>Fecha de nacimiento</label><input id="Nacimiento" placeholder="dd/mm/aaaa"></div>
+      <div><label>Lugar de nacimiento</label><input id="Lugar"></div>
       <div class="span2"><label>Domicilio</label><input id="Domicilio"></div>
-      <div><label>Teléfono</label><input id="Telefono"></div>
+      <div><label>Teléfono</label><input id="Telefono" inputmode="numeric" pattern="[0-9 ]*"></div>
       <div><label>Condición (oblig.)</label>
         <select id="Condicion">
           <option></option><option>Requirente</option><option>Perjudicado</option>
@@ -92,603 +77,249 @@
     </div>
   </div>
 </div>
-<!-- ===== PARCHE V6 MRZ & CAMPOS (pegar antes del último <script>) ===== -->
+
 <script>
-(function(){
-  // Utilidades de este parche (no interfieren con las tuyas)
-  const _clean = s => (s||"").normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
-  const _collapse = s => (s||"").replace(/\s+/g,' ').trim();
-  const _tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, c=>c.toUpperCase());
+/* ================== Reglas y utilidades base (capitalización, limpieza) ================== */
+const clean = s => (s||"").normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
+const collapse = s => (s||"").replace(/\s+/g,' ').trim();
+const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
 
-  // Reconstruye MRZ virtual cuando L1+L2+L3 vienen en una sola línea
-  function splitMRZVirtual(ocrText){
-    const txt = _clean(ocrText).replace(/\n+/g,' ').replace(/\s+/g,' ');
-    // L3: tomar el último '<<' como separador apellidos<<nombres
-    const l3m = txt.match(/([A-Z<]{2,}?)<<([A-Z<]{2,}?)(?:<+|$)/);
-    let vL3 = "";
-    if(l3m){
-      // construimos solo la parte APELLIDOS<<NOMBRES
-      vL3 = (l3m[1] + '<<' + l3m[2]).replace(/[^A-Z<]/g,'');
-    }
-    // L1: primer patrón "8 dígitos + letra" inmediatamente antes de <<"
-    const l1m = txt.match(/([0-9]{8}[A-Z])<</);
-    const vL1 = l1m ? (l1m[1] + '<<') : "";
-
-    // L2: YYMMDD + sexo + ... + nacionalidad (3 letras)
-    const l2m = txt.match(/([0-9]{2})([0-9]{2})([0-9]{2})([MF])[A-Z0-9<]*?([A-Z]{3})/);
-    const vL2 = l2m ? { yy:l2m[1], mm:l2m[2], dd:l2m[3], sx:l2m[4], nat:l2m[5] } : null;
-
-    return { vL1, vL2, vL3 };
-  }
-
-  // DNI estricto (8 dígitos + letra) desde L1 virtual
-  function dniFromL1Virtual(L1){
-    if(!L1) return "";
-    const j = L1.indexOf("<<");
-    if(j<9) return "";
-    const cand = L1.slice(j-9, j);
-    return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
-  }
-
-  // Nombre y apellidos desde L3 virtual: APELLIDOS<<NOMBRES (sin filtrar palabras duplicadas)
-  function namesFromL3Virtual(L3){
-    if(!L3 || !L3.includes("<<")) return { nombre:"", apellidos:"" };
-    const i = L3.lastIndexOf("<<"); // el último por robustez
-    const ap = L3.slice(0,i).replace(/<+/g,' ').trim();
-    const nm = L3.slice(i+2).replace(/<+/g,' ').trim();
-    return { nombre: _tcase(nm), apellidos: ap.toUpperCase() };
-  }
-
-  // Fecha y sexo desde L2 virtual
-  function dateSexNatFromL2Virtual(L2){
-    if(!L2) return { fecha:"", sexo:"", nac:"" };
-    const yy = +L2.yy, mm=L2.mm, dd=L2.dd;
-    const year = yy >= 30 ? 1900 + yy : 2000 + yy;
-    return {
-      fecha: `${dd}/${mm}/${year}`,
-      sexo: L2.sx === "F" ? "FEMENINO" : "MASCULINO",
-      nac:  L2.nat === "ESP" ? "España" : L2.nat
-    };
-  }
-
-  // Domicilio fallback: acepta bloque de 1 sola línea (entre "DOMICILIO" y "EQUIPO"/MRZ)
-  function domicilioFallback(ocrText){
-    const lines = _clean(ocrText).split('\n').map(s=>s.trim()).filter(Boolean);
-    const U = lines.map(s=>s.toUpperCase());
-    const start = U.findIndex(l => /(DOMI|COMI|DIREC|CALLE|AVDA|DOMIC)/.test(l));
-    if(start < 0) return "";
-    const out = [];
-    for(let k=start+1;k<lines.length;k++){
-      const L = U[k];
-      if (/EQUIPO/.test(L)) break;
-      if (/<{2,}/.test(L)) break; // MRZ corta
-      if (!lines[k].trim()) continue;
-      // descarta códigos tipo 28391A6DK aislados
-      if (/^[A-Z0-9]{6,}$/.test(L)) continue;
-      out.push(lines[k]);
-      if(out.length >= 3) break;
-    }
-    if(!out.length) return "";
-    // permitimos 1 sola línea
-    const uniq = [...new Set(out.map(s=>s.trim()))];
-    return _tcase(_collapse(uniq.join(', ')));
-  }
-
-  // Padres fallback si quedó "X y"
-  function padresFallback(ocrText){
-    const lines = _clean(ocrText).split('\n').map(s=>s.trim()).filter(Boolean);
-    const U = lines.map(s=>s.toUpperCase());
-    const i = U.findIndex(l => /(HIJ|HIO|MADRE|PADRE|PROGEN|REPRES|PADRES)/.test(l));
-    if(i < 0) return "";
-    const take = [];
-    // inline tras encabezado
-    const inline = lines[i].replace(/.*?(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|REPRES|PADRES)\s*/i,'').trim();
-    if(inline) take.push(inline);
-    // dos líneas siguientes
-    for(let k=i+1;k<Math.min(lines.length, i+3);k++){
-      const L = U[k];
-      if (/<{2,}/.test(L)) break;
-      if (/(DOMI|LUGAR|EQUIPO)/.test(L)) break;
-      if (/^[A-Z0-9]{6,}$/.test(L)) continue;
-      if(lines[k]) take.push(lines[k]);
-    }
-    const flat = take.join(' / ');
-    const parts = flat.split(/[\/,;]+/).map(s=>_collapse(s)).filter(Boolean).map(_tcase);
-    if(!parts.length) return "";
-    if(parts.length === 1) return parts[0] + " y";
-    return `${parts[0]} y ${parts[1]}`;
-  }
-
-  // Post-parche: se ejecuta tras tu análisis y corrige solo lo roto
-  window.addEventListener('load', function(){
-    const btn = document.getElementById('analyze');
-    if(!btn) return;
-    btn.addEventListener('click', function(){
-      setTimeout(function(){
-        const ocrEl = document.getElementById('ocr');
-        if(!ocrEl) return;
-        const txt = ocrEl.value || "";
-        const vt = splitMRZVirtual(txt);
-
-        // Campos DOM
-        const Nombre      = document.getElementById('Nombre');
-        const Apellidos   = document.getElementById('Apellidos');
-        const Tipo        = document.getElementById('Tipo');
-        const Numero      = document.getElementById('Numero');
-        const Sexo        = document.getElementById('Sexo');
-        const Nacionalidad= document.getElementById('Nacionalidad');
-        const Nacimiento  = document.getElementById('Nacimiento');
-        const Lugar       = document.getElementById('Lugar');
-        const Domicilio   = document.getElementById('Domicilio');
-        const Padres      = document.getElementById('Padres');
-
-        // 1) MRZ nombres/apellidos si están mal (apellidos vacíos o nombre con dígitos/ESP/churros)
-        const badNombre = /\d/.test(Nombre.value) || /ESPANOLA|IDESP|ESP</i.test(Nombre.value || "");
-        if((!Apellidos.value || badNombre) && vt.vL3){
-          const np = namesFromL3Virtual(vt.vL3);
-          if(np.apellidos) Apellidos.value = np.apellidos;
-          if(np.nombre)    Nombre.value    = np.nombre;
-        }
-
-        // 2) DNI si falta o parece inconsistente
-        if((!Numero.value || !/^[0-9]{8}[A-Z]$/.test(Numero.value)) && vt.vL1){
-          const dni = dniFromL1Virtual(vt.vL1);
-          if(dni){
-            Numero.value = dni;
-            if(!Tipo.value) Tipo.value = "DNI";
-          }
-        }
-
-        // 3) Fecha/Sexo/Nacionalidad desde L2 virtual si las actuales están vacías o raras
-        if(vt.vL2){
-          if(!Nacimiento.value || !/^\d{2}\/\d{2}\/\d{4}$/.test(Nacimiento.value)){
-            const ds = dateSexNatFromL2Virtual(vt.vL2);
-            if(ds.fecha) Nacimiento.value = ds.fecha;
-            if(ds.sexo && !Sexo.value) Sexo.value = ds.sexo;
-            if(ds.nac  && !Nacionalidad.value) Nacionalidad.value = ds.nac;
-          }
-        }
-
-        // 4) Domicilio fallback (aceptar 1 sola línea válida)
-        if(!Domicilio.value){
-          const dom = domicilioFallback(txt);
-          if(dom) Domicilio.value = dom;
-        }
-
-        // 5) Padres “X y” → completar si hay segundo
-        if(/ y$/.test((Padres.value||"").trim())){
-          const pf = padresFallback(txt);
-          if(pf && / y /.test(pf)) Padres.value = pf;
-        }
-
-        // 6) Validación visual fina si tu HTML ya la tiene
-        ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-          .forEach(id=>{
-            const el = document.getElementById(id);
-            if(!el) return;
-            const ok = !!(el.value && el.value.trim());
-            el.classList.toggle("valid", ok);
-            el.classList.toggle("invalid", !ok);
-          });
-      }, 0); // ejecuta después de tu handler original
-    });
-  });
-})();
-</script>
-<!-- ===== FIN PARCHE V6 ===== -->
-<!-- ===== PARCHE V6+ COMPLETO (MRZ + NACIMIENTO + DOMICILIO + PADRES) ===== -->
-<script>
-(function(){
-  const _clean = s => (s||"").normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
-  const _collapse = s => (s||"").replace(/\s+/g,' ').trim();
-  const _tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, c=>c.toUpperCase());
-
-  /* === MRZ reconstrucción estricta === */
-  function splitMRZVirtual_STRICT(ocr){
-    const txt = (ocr||"").toUpperCase().replace(/\n+/g,' ').replace(/[^A-Z0-9< ]+/g,' ').replace(/\s+/g,' ').trim();
-    // L3 → último APELLIDOS<<NOMBRES
-    const reL3 = /([A-Z<]{2,})<<([A-Z<]{2,})/g;
-    let m, last = null;
-    while((m = reL3.exec(txt)) !== null) last = m;
-    const vL3 = last ? (last[1] + '<<' + last[2]).replace(/[^A-Z<]/g,'') : "";
-    // L1 → nº documento justo antes de "<<"
-    const mL1 = txt.match(/([0-9]{8}[A-Z])<</);
-    const vL1 = mL1 ? (mL1[1] + '<<') : "";
-    // L2 → fecha YYMMDD + sexo + país
-    const mL2 = txt.match(/([0-9]{2})([0-9]{2})([0-9]{2})([MF])[A-Z0-9<]*?([A-Z]{3})/);
-    const vL2 = mL2 ? {yy:mL2[1], mm:mL2[2], dd:mL2[3], sx:mL2[4], nat:mL2[5]} : null;
-    return {vL1, vL2, vL3};
-  }
-
-  const dniFromL1 = (L1)=>{
-    if(!L1) return "";
-    const j=L1.indexOf("<<"); if(j<9) return "";
-    const cand = L1.slice(j-9,j);
-    return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
-  };
-
-  const namesFromL3 = (L3)=>{
-    if(!L3 || L3.indexOf("<<")<0) return {nombre:"", apellidos:""};
-    const pos = L3.lastIndexOf("<<");
-    let aps = L3.slice(0,pos).replace(/<+/g,' ').trim();
-    let nom = L3.slice(pos+2).replace(/<+/g,' ').trim();
-    aps = aps.replace(/[^A-Z ]+/g,' ').trim();
-    nom = nom.replace(/[^A-Z ]+/g,' ').trim();
-    return {nombre:_tcase(nom), apellidos:aps.toUpperCase()};
-  };
-
-  const dsFromL2 = (L2)=>{
-    if(!L2) return {fecha:"",sexo:"",nac:""};
-    const yy=+L2.yy, mm=L2.mm, dd=L2.dd;
-    const year = yy>=30 ? 1900+yy : 2000+yy;
-    return {
-      fecha:`${dd}/${mm}/${year}`,
-      sexo:L2.sx==="F"?"FEMENINO":"MASCULINO",
-      nac: L2.nat==="ESP"?"España":L2.nat
-    };
-  };
-
-  /* === Lugar Nacimiento OCR === */
-  function lugarFromOCR(ocr){
-    const lines=_clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-    const U=lines.map(s=>s.toUpperCase());
-    const idx=U.findIndex(l=>/(LUGAR|LIGAR|NACI|NACIM|NACIMIENTO)/.test(l));
-    if(idx<0) return "";
-    const take=[];
-    for(let k=idx+1;k<lines.length;k++){
-      const up=U[k];
-      if(/(DOMI|COMI|EQUIPO)/.test(up) || /<{2,}/.test(up)) break;
-      if(!lines[k]) continue;
-      if(/^[A-Z0-9]{6,}$/.test(up)) continue;
-      take.push(lines[k]);
-      if(take.length>=3) break;
-    }
-    if(!take.length) return "";
-    const uniq=[...new Set(take.map(_collapse))];
-    return _tcase(_collapse(uniq.join(', ')));
-  }
-
-  /* === Domicilio fallback (acepta 1 línea válida) === */
-  const looksAddr = l=>/(AVDA|CALLE|C\.|CTRA|CARRE|URB|VIA)/.test(l) || /\b[0-9]{1,4}\b/.test(l);
-  function domicilioFallback(ocr){
-    const lines=_clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-    const U=lines.map(l=>l.toUpperCase());
-    const idx = U.findIndex(l=>/(DOMI|CALLE|AVDA|URB)/.test(l));
-    if(idx<0){
-      const cand=lines.filter((l,i)=>looksAddr(U[i]));
-      if(!cand.length) return "";
-      return _tcase(_collapse([...new Set(cand)].join(', ')));
-    }
-    const out=[];
-    for(let k=idx+1;k<lines.length;k++){
-      const up=U[k];
-      if(/EQUIPO/.test(up)) break;
-      if(/<{2,}/.test(up)) break;
-      if(/^[A-Z0-9]{6,}$/.test(up)) continue;
-      if(!lines[k].trim()) continue;
-      out.push(lines[k]);
-      if(out.length>=3) break;
-    }
-    if(!out.length) return "";
-    const uniq=[...new Set(out.map(_collapse))];
-    return _tcase(_collapse(uniq.join(', ')));
-  }
-
-  /* === Padres fallback === */
-  function padresFallback(ocr){
-    const lines=_clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-    const U=lines.map(s=>s.toUpperCase());
-    const i=U.findIndex(l=>/(HIJ|MADRE|PADRE)/.test(l));
-    if(i<0) return "";
-    const names=[];
-    const inline=lines[i].replace(/.*?(HIJ[O0]\/?A DE|MADRE|PADRE)\s*/i,'').trim();
-    if(inline) names.push(inline);
-    for(let k=i+1;k<i+3 && k<lines.length;k++){
-      const up=U[k];
-      if(/(DOMI|LUGAR|EQUIPO)/.test(up)||/<{2,}/.test(up)||/^[A-Z0-9]{6,}$/.test(up)) break;
-      names.push(lines[k]);
-    }
-    const flat=names.join(' / ');
-    const parts=flat.split(/[\/,;]+/).map(_collapse).filter(Boolean).map(_tcase);
-    if(!parts.length) return "";
-    if(parts.length===1) return parts[0]+" y";
-    return `${parts[0]} y ${parts[1]}`;
-  }
-
-  /* === Hook tras análisis original === */
-  window.addEventListener('load',()=>{
-    const btn=document.getElementById('analyze');
-    if(!btn) return;
-    btn.addEventListener('click',()=>{
-      setTimeout(()=>{
-        const ocr = (document.getElementById('ocr')?.value||"");
-        if(!ocr.trim()) return;
-
-        const {vL1,vL2,vL3} = splitMRZVirtual_STRICT(ocr);
-
-        const Nombre=document.getElementById('Nombre');
-        const Ap     =document.getElementById('Apellidos');
-        const Nac    =document.getElementById('Nacionalidad');
-        const Naci   =document.getElementById('Nacimiento');
-        const Sexo   =document.getElementById('Sexo');
-        const Num    =document.getElementById('Numero');
-        const Tipo   =document.getElementById('Tipo');
-        const Lugar  =document.getElementById('Lugar');
-        const Dom    =document.getElementById('Domicilio');
-        const Pad    =document.getElementById('Padres');
-
-        // Nombres / Apellidos
-        const bad = /\d/.test(Nombre.value||"") || /(ESPANOLA|IDESP|ESP )/i.test(Nombre.value||"");
-        if((!Ap.value||bad)&&vL3){
-          const np=namesFromL3(vL3);
-          if(np.apellidos)Ap.value=np.apellidos;
-          if(np.nombre)Nombre.value=np.nombre;
-        }
-
-        // DNI
-        if((!Num.value||!/^[0-9]{8}[A-Z]$/.test(Num.value))&&vL1){
-          const d=dniFromL1(vL1);
-          if(d){Num.value=d; if(!Tipo.value)Tipo.value="DNI";}
-        }
-
-        // Fecha/Sexo/Nacionalidad
-        if(vL2){
-          const ds=dsFromL2(vL2);
-          if(ds.fecha&&!/^\d{2}\/\d{2}\/\d{4}$/.test(Naci.value||""))Naci.value=ds.fecha;
-          if(ds.sexo&&!Sexo.value)Sexo.value=ds.sexo;
-          if(ds.nac&&!Nac.value)Nac.value=ds.nac;
-        }
-
-        // Lugar de nacimiento fallback
-        if(!Lugar.value){
-          const ln=lugarFromOCR(ocr);
-          if(ln)Lugar.value=ln;
-        }
-
-        // Domicilio fallback
-        if(!Dom.value){
-          const dm=domicilioFallback(ocr);
-          if(dm)Dom.value=dm;
-        }
-
-        // Padres fallback
-        if(/ y$/.test((Pad.value||"").trim())){
-          const pf=padresFallback(ocr);
-          if(pf && / y /.test(pf)) Pad.value=pf;
-        }
-
-        // Revalidación visual si ya estaba
-        ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-          .forEach(id=>{
-            const el=document.getElementById(id);
-            if(!el)return;
-            const ok=!!(el.value&&el.value.trim());
-            el.classList.toggle("valid",ok);
-            el.classList.toggle("invalid",!ok);
-          });
-      },0);
-    });
-  });
-})();
-</script>
-<!-- ===== FIN PARCHE V6+ ===== -->
-  <script>
-// ===== Utilidades de limpieza y formato =====
-const clean = s => s.normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
-const collapse = s => s.replace(/\s+/g,' ').trim();
-const tcase = s => s.toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g, c=>c.toUpperCase());
-
-// ===== Detectores amplios (toleran OCR roto) =====
-const HEAD = {
-  domicilio: /(DOMI|COMI|CALLE|CL |AVDA|AVENID|VIA|URB|URBAN|CTRA|CARRE|PZA|PLAZA|PORTAL|BLOQ|ESC|PLANTA|PISO|KM )/,
-  nacimiento: /(L[UI]G[AO]R|LAGAR|LIGAR|LUGAR|LOCALID|CIUDAD|POBLAC|PROVIN).*(NAC|NACIM|NADIM)|LUGAR DE NAC|NACIMIENTO/,
-  padres: /(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)/
-};
-const looksAddr = l => /(C\.|CALLE|AVDA|PZA|PLAZA|CTRA|CARRE|URB|VIA)/.test(l) || /\b[0-9]{1,4}[A-Z]?\b/.test(l);
-const isMRZLike = l => /<{2,}/.test(l);
-const isCodeToken = l => /^[A-Z0-9]{5,12}$/.test(l);
-
-// ===== MRZ helpers =====
-function mrzL1(ocr){ return (ocr.split('\n').map(clean).find(l=>l.includes("<<"))||"").toUpperCase(); }
-function mrzL3(ocr){ const arr=ocr.split('\n').map(clean).filter(l=>l.includes("<<")); return (arr[arr.length-1]||"").toUpperCase(); }
-function mrzL2(ocr){
-  // Busca YYMMDD + sexo + … + nacionalidad (aprox)
-  const m = ocr.toUpperCase().match(/([0-9]{2})([0-9]{2})([0-9]{2}).*?([MF]).*?([A-Z]{3})/);
-  return m ? {yy:m[1], mm:m[2], dd:m[3], sx:m[4], nat:m[5]} : null;
+/* ================== MRZ ROBUSTO: normalización y extracción estricta ================== */
+function normMRZ(s){
+  return (s||"").toUpperCase()
+    .replace(/[く‹«＜⟨⟪]/g,'<')          // variantes del símbolo '<'
+    .replace(/[^A-Z0-9< \n]/g,' ')       // limpia basura
+    .replace(/\s+/g,' ')
+    .trim();
 }
+// L3 = último APELLIDOS<<NOMBRES
+function mrzL3_strict(ocr){
+  const txt = normMRZ(ocr);
+  const re = /([A-Z]+(?:<[A-Z]+)*)<<([A-Z]+(?:<[A-Z]+)*)(?:<+|$)/g;
+  let m,last=null; while((m=re.exec(txt))!==null){ last=m; }
+  return last ? (last[1]+'<<'+last[2]).replace(/[^A-Z<]/g,'') : "";
+}
+// L1: “8 dígitos + letra” justo antes del primer “<<”
+function mrzL1_strict(ocr){
+  const txt = normMRZ(ocr);
+  const m = txt.match(/([0-9]{8}[A-Z])<</);
+  return m ? (m[1]+'<<') : "";
+}
+// L2: YYMMDD + Sexo + Nacionalidad
+function mrzL2_strict(ocr){
+  const txt = normMRZ(ocr);
+  const m = txt.match(/([0-9]{2})([0-9]{2})([0-9]{2})([MF])[A-Z0-9<]*?([A-Z]{3})/);
+  return m ? {yy:m[1],mm:m[2],dd:m[3],sx:m[4],nat:m[5]} : null;
+}
+
+/* ================== Reglas de campos desde MRZ ================== */
+// DNI = exactamente 9 caracteres previos al primer “<<”: 8 dígitos + letra
 function dniFromL1(L1){
   if(!L1) return "";
-  const j = L1.indexOf("<<")>=0 ? L1.indexOf("<<") : L1.indexOf("<");
-  if(j<9) return "";
-  const cand = L1.slice(j-9, j);
+  const j=L1.indexOf("<<"); if(j<9) return "";
+  const cand=L1.slice(j-9,j);
   return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
 }
-function birthFromL2(L2){
-  if(!L2) return "";
-  const yy=+L2.yy, mm=L2.mm, dd=L2.dd;
-  const year = yy>=30?1900+yy:2000+yy;
-  return `${dd}/${mm}/${year}`;
-}
-function sexoFromL2(L2){ if(!L2) return ""; return L2.sx==="F"?"FEMENINO":"MASCULINO"; }
-function natFromL2(L2){ if(!L2) return ""; return L2.nat==="ESP"?"España":L2.nat; }
-
-// ===== Nombres y apellidos (desde L3: APELLIDOS<<NOMBRES) =====
-function parseNames(ocr){
-  const L3 = mrzL3(ocr);
+// Nombres/Apellidos desde L3. No filtrar apellidos duplicados válidos.
+function namesFromL3(L3){
   if(!L3 || !L3.includes("<<")) return {nombre:"",apellidos:""};
-  const i = L3.indexOf("<<");
-  let ap = L3.slice(0,i).replace(/<+/g,' ').trim();       // NO filtrar palabras repetidas (tu regla)
-  let nm = L3.slice(i+2).replace(/<+/g,' ').trim();
-  return {nombre:tcase(nm), apellidos:ap.toUpperCase()};
+  const i=L3.lastIndexOf("<<");
+  let aps=L3.slice(0,i).replace(/<+/g,' ');
+  let nom=L3.slice(i+2).replace(/<+/g,' ');
+  // saneado
+  aps = aps.replace(/[^A-Z ]+/g,' ').replace(/\s+/g,' ').trim();  // MAYÚSCULAS
+  nom = nom.replace(/[^A-Z ]+/g,' ').replace(/\s+/g,' ').trim();  // TitleCase
+  // evitar falsos apellidos como ESP / IDESP
+  if(/^ESP(\s|$)/.test(aps) || /^IDESP/.test(aps)) aps="";
+  // nombre no debe contener números ni tokens MRZ
+  if(/\d/.test(nom) || /ESP/.test(nom)) nom="";
+  return {nombre:tcase(nom), apellidos:aps.toUpperCase()};
 }
-
-// ===== Extraer bloques (domicilio, nacimiento, padres con inline) =====
-function extractBlocks(ocr){
-  const raw = ocr.replace(/\r/g,'').split('\n').map(s=>collapse(clean(s))).filter(Boolean);
-  const up  = raw.map(s=>s.toUpperCase());
-
-  const nextStop=(idx)=>{
-    for(let k=idx+1;k<up.length;k++){
-      const L=up[k];
-      if(HEAD.domicilio.test(L)||HEAD.nacimiento.test(L)||HEAD.padres.test(L)||isMRZLike(L)||isCodeToken(L)) return k;
-    }
-    return up.length;
+// Fecha, sexo, nacionalidad desde L2. Siglo: aa>=30→19aa, aa<30→20aa
+function dsFromL2(L2){
+  if(!L2) return {fecha:"",sexo:"",nac:""};
+  const yy=+L2.yy, mm=L2.mm, dd=L2.dd;
+  const year = yy>=30 ? 1900+yy : 2000+yy;
+  return {
+    fecha: `${dd}/${mm}/${year}`,
+    sexo: L2.sx==="F" ? "FEMENINO" : "MASCULINO",
+    nac:  L2.nat==="ESP" ? "España" : L2.nat
   };
-
-  // DOMICILIO con encabezado
-  let domicilio="";
-  const dIdx=up.findIndex(l=>HEAD.domicilio.test(l));
-  if(dIdx>=0){
-    const end=nextStop(dIdx);
-    const lines=raw.slice(dIdx+1,end)
-      .filter(s=>!isMRZLike(s.toUpperCase()))
-      .filter(s=>!isCodeToken(s.toUpperCase()));
-    if(lines.length){
-      domicilio = tcase(dedupeComma(lines.join(', ')));
-    }
-  }
-  // DOMICILIO implícito si no hay encabezado (acepta 1 sola línea válida)
-  if(!domicilio){
-    let end0 = up.findIndex(L=>HEAD.nacimiento.test(L)||HEAD.padres.test(L)||isMRZLike(L));
-    if(end0<0) end0=up.length;
-    const cand = [];
-    for(let i=0;i<end0;i++){
-      if(isCodeToken(up[i])) continue;
-      if(looksAddr(up[i])) cand.push(raw[i]);
-    }
-    if(cand.length){
-      domicilio = tcase(dedupeComma(cand.join(', ')));
-    }
-  }
-
-  // NACIMIENTO
-  let nacimiento="";
-  const nIdx=up.findIndex(l=>HEAD.nacimiento.test(l));
-  if(nIdx>=0){
-    const end=nextStop(nIdx);
-    const lines=raw.slice(nIdx+1,end).filter(s=>!isMRZLike(s.toUpperCase()));
-    if(lines.length){
-      nacimiento = tcase(dedupeComma(lines.join(', ')));
-    }
-  }
-
-  // PADRES (acepta inline: "HIJO/A DE JUAN", y siguientes líneas)
-  let padres="";
-  const pIdx=up.findIndex(l=>HEAD.padres.test(l));
-  if(pIdx>=0){
-    const headerLineRaw = raw[pIdx];
-    // inline tras encabezado
-    let inline = headerLineRaw.replace(/.*?(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)\s*/i,'').trim();
-    inline = inline.replace(/[<>,;]+/g,' ').trim();
-    const names = [];
-    if(inline) names.push(inline);
-    // 2 líneas siguientes si válidas
-    for(let t=1;t<=2;t++){
-      const cand = raw[pIdx+t]; if(!cand) break;
-      const U = up[pIdx+t];
-      if(isMRZLike(U) || HEAD.domicilio.test(U) || HEAD.nacimiento.test(U) || HEAD.padres.test(U) || isCodeToken(U)) break;
-      names.push(cand);
-    }
-    const flat = names.join(' / ');
-    const parts = flat.split(/[\/,;]+/).map(s=>collapse(s)).filter(Boolean).map(tcase);
-    const p1 = parts[0] || "";
-    const p2 = parts[1] || "";
-    padres = (p1||p2) ? `${p1} y ${p2}`.trim() : "";
-  }
-
-  return {domicilio,nacimiento,padres};
 }
 
-// De-duplicar fragmentos separados por comas (manteniendo 1 sola aparición)
-function dedupeComma(s){
-  const arr = s.split(',').map(x=>collapse(x));
-  const out=[]; const seen=new Set();
-  for(const p of arr){ const k=p.toUpperCase(); if(!seen.has(k)){ seen.add(k); out.push(p); } }
-  return out.join(', ');
+/* ================== Encabezados tolerantes (excesivos) ================== */
+const HEAD = {
+  domicilio: /(DOMI|COMI|D0MI|DOMIL|DOMIC|DIREC|CALLE|CL |AVDA|AVENID|VIA|URB|URBAN|CTRA|CARRE|CARRET|PZA|PLAZA|PORTAL|BLOQ|ESC|PLANTA|PISO|KM )/,
+  nacimiento: /(L[UI]G[AO]R|LAGAR|LIGAR|LUGAR|LOCALID|CIUDAD|POBLAC|PROVIN).*(NAC|NACIM|NADIM)|LUGAR DE NAC|NACIMIENTO|LUGOR|LIGAR DE NAC/,
+  padres: /(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)/
+};
+const isCodeToken = l => /^[A-Z0-9]{6,}$/.test((l||"").toUpperCase());
+const looksAddr = l => /(AVDA|C\.|CALLE|PZA|PLAZA|CTRA|CARRE|URB|VIA)/.test((l||"").toUpperCase()) || /\b[0-9]{1,4}[A-Z]?\b/.test(l||"");
+const isMRZLike = l => /<{2,}/.test((l||"").toUpperCase());
+
+function domicilioFromOCR(ocr){
+  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
+  const U=lines.map(s=>s.toUpperCase());
+  let idx = U.findIndex(l=>HEAD.domicilio.test(l));
+  if(idx<0){
+    const cand=lines.filter((l,i)=>looksAddr(U[i]));
+    return cand.length ? tcase(collapse([...new Set(cand)].join(', '))) : "";
+  }
+  const out=[];
+  for(let k=idx+1;k<lines.length;k++){
+    const up=U[k];
+    if(/EQUIPO/.test(up) || isMRZLike(up)) break;
+    if(isCodeToken(up)) continue;
+    if(!lines[k].trim()) continue;
+    out.push(lines[k]); if(out.length>=4) break;
+  }
+  if(!out.length) return "";
+  return tcase(collapse([...new Set(out.map(collapse))].join(', ')));
+}
+function lugarFromOCR(ocr){
+  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
+  const U=lines.map(s=>s.toUpperCase());
+  const idx=U.findIndex(l=>HEAD.nacimiento.test(l));
+  if(idx<0) return "";
+  const take=[];
+  for(let k=idx+1;k<lines.length;k++){
+    const up=U[k];
+    if(HEAD.domicilio.test(up) || /EQUIPO/.test(up) || isMRZLike(up)) break;
+    if(isCodeToken(up)) continue;
+    if(!lines[k].trim()) continue;
+    take.push(lines[k]); if(take.length>=3) break;
+  }
+  if(!take.length) return "";
+  return tcase(collapse([...new Set(take.map(collapse))].join(', ')));
+}
+function padresFromOCR(ocr){
+  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
+  const U=lines.map(s=>s.toUpperCase());
+  const i=U.findIndex(l=>HEAD.padres.test(l));
+  if(i<0) return "";
+  const names=[];
+  const inline=lines[i].replace(/.*?(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)\s*/i,'').trim();
+  if(inline) names.push(inline);
+  for(let k=i+1;k<i+3 && k<lines.length;k++){
+    const up=U[k];
+    if(HEAD.domicilio.test(up)||HEAD.nacimiento.test(up)||/EQUIPO/.test(up)||isMRZLike(up)||isCodeToken(up)) break;
+    names.push(lines[k]);
+  }
+  const parts = collapse(names.join(' / ')).split(/[\/,;]+/).map(s=>collapse(s)).filter(Boolean).map(tcase);
+  if(!parts.length) return "";
+  if(parts.length===1) return parts[0]+" y";          // si solo hay uno
+  return `${parts[0]} y ${parts[1]}`;
 }
 
-// ===== Validación visual (borde verde/rojo) =====
+/* ================== Detección de TIPO si no hay DNI ================== */
+function detectTipoFallback(ocr){
+  const txt = normMRZ(ocr);
+  // NIE: letra inicial X/Y/Z + 7 dígitos + letra
+  if(/[XYZ][0-9]{7}[A-Z]/.test(txt)) return "NIE";
+  // PASAPORTE: línea que empiece con P<
+  if(/\bP</.test(txt)) return "PASAPORTE";
+  return "";
+}
+
+/* ================== Validación visual ================== */
 function validateAll(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
       const el=document.getElementById(id);
-      const ok = !!(el.value && el.value.trim());
-      el.classList.toggle("valid", ok);
-      el.classList.toggle("invalid", !ok);
+      const ok=!!(el.value&&el.value.trim());
+      el.classList.toggle("valid",ok);
+      el.classList.toggle("invalid",!ok);
     });
 }
-
-// ===== Analizar OCR =====
-document.getElementById('analyze').addEventListener('click', ()=>{
-  const raw = document.getElementById('ocr').value||"";
-  const txt = clean(raw);
-  if(!txt) return;
-
-  // MRZ
-  const L1 = mrzL1(txt);
-  const L2 = mrzL2(txt);
-  const {nombre, apellidos} = parseNames(txt);
-  const dni = dniFromL1(L1);
-
-  // Bloques OCR
-  const {domicilio, nacimiento, padres} = extractBlocks(txt);
-
-  // Relleno (MRZ manda si hay dato)
-  document.getElementById('Nombre').value     = nombre || "";
-  document.getElementById('Apellidos').value  = apellidos || "";
-  document.getElementById('Tipo').value       = dni ? "DNI" : "";
-  document.getElementById('Numero').value     = dni || "";
-  document.getElementById('Sexo').value       = L2 ? sexoFromL2(L2) : "";
-  document.getElementById('Nacionalidad').value = L2 ? natFromL2(L2) : "";
-  document.getElementById('Nacimiento').value = L2 ? birthFromL2(L2) : "";
-  document.getElementById('Lugar').value      = nacimiento || "";
-  document.getElementById('Domicilio').value  = domicilio || "";
-  document.getElementById('Padres').value     = padres || "";
-
-  updateFilename();
-  validateAll();
-});
-
-// ===== Pegar portapapeles (con fallback) =====
-document.getElementById('pasteClipboard').addEventListener('click', async ()=>{
-  try{
-    const t = await navigator.clipboard.readText();
-    if(t){ document.getElementById('ocr').value=t; document.getElementById('analyze').click(); return; }
-  }catch{}
-  const m = prompt("Pega OCR:","");
-  if(m){ document.getElementById('ocr').value=m; document.getElementById('analyze').click(); }
-});
-
-// ===== Limpiar =====
-document.getElementById('clear').addEventListener('click', ()=>{
-  document.getElementById('ocr').value="";
-  ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-    .forEach(id=>document.getElementById(id).value="");
-  updateFilename();
-  validateAll();
-});
-
-// ===== Validación en tiempo real =====
-document.querySelectorAll("input,select").forEach(el=>{
-  el.addEventListener("input", validateAll);
-  el.addEventListener("blur", validateAll);
-});
-
-// ===== Nombre de archivo dinámico =====
 function updateFilename(){
-  const ap = (document.getElementById('Apellidos').value||"APELLIDOS").trim();
+  const ap=(document.getElementById('Apellidos').value||"APELLIDOS").trim();
   document.getElementById('fname').textContent = ap + ".json";
 }
+
+/* ================== Núcleo: leer portapapeles → analizar → rellenar ================== */
+async function readFromClipboard(){
+  try{
+    const txt = await navigator.clipboard.readText();
+    return txt || "";
+  }catch{
+    const m = prompt("Pega manualmente el OCR:");
+    return m || "";
+  }
+}
+function processOCR(ocr){
+  if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
+
+  // MRZ
+  const L3 = mrzL3_strict(ocr);
+  const L1 = mrzL1_strict(ocr);
+  const L2 = mrzL2_strict(ocr);
+
+  // Nombre / Apellidos (no eliminar duplicados)
+  const np = namesFromL3(L3);
+  if(np.apellidos) document.getElementById('Apellidos').value = np.apellidos;
+  if(np.nombre)    document.getElementById('Nombre').value    = np.nombre;
+
+  // DNI exacto (9 previos al primer <<)
+  const dni = dniFromL1(L1);
+  if(dni){
+    document.getElementById('Numero').value = dni;
+    document.getElementById('Tipo').value   = "DNI";
+  }
+
+  // Si no hay DNI, intenta NIE o PASAPORTE
+  if(!document.getElementById('Tipo').value){
+    const t = detectTipoFallback(ocr);
+    if(t) document.getElementById('Tipo').value = t;
+  }
+
+  // Fecha / Sexo / Nacionalidad
+  const ds = dsFromL2(L2);
+  if(ds.fecha) document.getElementById('Nacimiento').value = ds.fecha;
+  if(ds.sexo)  document.getElementById('Sexo').value = ds.sexo;
+  if(ds.nac)   document.getElementById('Nacionalidad').value = ds.nac;
+
+  // Lugar de nacimiento (encabezados tolerantes)
+  if(!document.getElementById('Lugar').value){
+    const ln = lugarFromOCR(ocr);
+    if(ln) document.getElementById('Lugar').value = ln;
+  }
+
+  // Domicilio (admite 1 sola línea)
+  if(!document.getElementById('Domicilio').value){
+    const dm = domicilioFromOCR(ocr);
+    if(dm) document.getElementById('Domicilio').value = dm;
+  }
+
+  // Padres “Nombre1 y Nombre2”
+  if(!document.getElementById('Padres').value || / y$/.test((document.getElementById('Padres').value||"").trim())){
+    const pf = padresFromOCR(ocr);
+    if(pf) document.getElementById('Padres').value = pf;
+  }
+
+  updateFilename();
+  validateAll();
+}
+
+/* ================== Botones ================== */
+document.getElementById('readAnalyze').addEventListener('click', async ()=>{
+  const ocr = await readFromClipboard();
+  processOCR(ocr);
+});
+document.getElementById('clear').addEventListener('click', ()=>{
+  ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
+    .forEach(id=>document.getElementById(id).value="");
+  updateFilename(); validateAll();
+});
 document.getElementById('Apellidos').addEventListener('input', updateFilename);
 
-// ===== Descargar JSON =====
+/* ================== Descargar JSON ================== */
 document.getElementById('download').addEventListener('click', ()=>{
   if(!document.getElementById('Condicion').value){
     alert("Condición obligatoria");
     document.getElementById('Condicion').classList.add('invalid');
     return;
   }
-  const data = {
+  const data={
     "Nombre": document.getElementById('Nombre').value,
     "Apellidos": (document.getElementById('Apellidos').value||"").toUpperCase(),
     "Tipo de documento": document.getElementById('Tipo').value,
@@ -702,13 +333,13 @@ document.getElementById('download').addEventListener('click', ()=>{
     "Teléfono": document.getElementById('Telefono').value,
     "Condición": document.getElementById('Condicion').value
   };
-  const fname = (document.getElementById('Apellidos').value||"APELLIDOS") + ".json";
-  const a = document.createElement('a');
+  const fname=(document.getElementById('Apellidos').value||"APELLIDOS") + ".json";
+  const a=document.createElement('a');
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
   a.download=fname; a.click();
 });
 
-// Estado inicial
+/* ================== Estado inicial ================== */
 updateFilename();
 validateAll();
 </script>

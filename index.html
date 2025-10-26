@@ -3,300 +3,399 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Filiación · OCR → JSON</title>
+  <title>DILIPOL · Filiación · OCR → JSON</title>
   <style>
-    :root{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-    body{margin:16px;color:#111}
-    h1{font-size:18px;margin:0 0 12px}
-    .grid{display:grid;gap:14px}
+    :root{
+      --bg:#0b1220;          /* fondo oscuro azulado */
+      --fg:#e6eefc;          /* texto claro */
+      --muted:#9bb1d4;       /* texto secundario */
+      --accent:#4da3ff;      /* acento azul */
+      --ok:#45c58a;
+      --warn:#ffb450;
+      --card:rgba(255,255,255,0.08);  /* vidrio */
+      --border:rgba(255,255,255,0.18);
+      --shadow:0 10px 30px rgba(0,0,0,0.35);
+      --radius:14px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; padding:20px;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+      color:var(--fg); background:
+      radial-gradient(1200px 600px at 10% -10%, #1a2a4a 0%, transparent 60%),
+      radial-gradient(1000px 700px at 110% 10%, #163560 0%, transparent 55%),
+      linear-gradient(180deg, #0b1220 0%, #0b1220 100%);
+    }
+    h1{margin:0 0 14px; font-size:20px; letter-spacing:.3px}
+    .grid{display:grid; gap:16px}
     .two{grid-template-columns:1fr}
-    @media(min-width:880px){.two{grid-template-columns:1fr 1fr}}
-    .card{border:1px solid #ddd;border-radius:12px;padding:14px;background:#fff}
-    .card h2{font-size:15px;margin:0 0 10px}
-    textarea{width:100%;min-height:32vh;padding:10px;border-radius:10px;border:1px solid #cbd5e1;font-family:ui-monospace,menlo,consolas}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .btn{border:1px solid #111;background:#111;color:#fff;padding:10px 14px;border-radius:10px;cursor:pointer}
-    .btn.secondary{background:#f5f5f5;color:#111;border-color:#cbd5e1}
+    @media(min-width:900px){ .two{grid-template-columns:1fr 1fr} }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:16px;
+      backdrop-filter: blur(10px);
+    }
+    .card h2{margin:0 0 10px; font-size:15px; color:#dbe7ff}
+
+    textarea{
+      width:100%; min-height:32vh;
+      background:rgba(10,16,28,0.45);
+      color:var(--fg);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:12px;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .btn{
+      border:1px solid var(--accent);
+      background:linear-gradient(180deg, rgba(77,163,255,0.25), rgba(77,163,255,0.12));
+      color:#e9f3ff; padding:10px 14px; border-radius:12px; cursor:pointer;
+    }
+    .btn.secondary{
+      border-color:var(--border);
+      background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+      color:#e6eefc;
+    }
     .btn:active{transform:translateY(1px)}
-    .fields{display:grid;gap:10px;grid-template-columns:1fr}
-    @media(min-width:720px){.fields{grid-template-columns:1fr 1fr}}
-    label{display:block;font-size:12px;margin-bottom:6px}
-    input,select{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px}
-    .span2{grid-column:1/-1}
-    .muted{color:#666;font-size:12px}
-    .ok{color:#065f46}
-    .warn{color:#92400e}
-    .mono{font-family:ui-monospace,menlo,consolas;font-size:12px}
+    .muted{color:var(--muted); font-size:12px}
+
+    .fields{display:grid; gap:12px; grid-template-columns:1fr}
+    @media(min-width:760px){ .fields{grid-template-columns:1fr 1fr} }
+    label{display:block; font-size:12px; color:#cfe0ff; margin:0 0 6px}
+    input,select{
+      width:100%; padding:10px 12px; border-radius:12px;
+      border:1px solid var(--border); background:rgba(10,16,28,0.45); color:var(--fg);
+      outline:none;
+    }
+    input::placeholder{color:#8fa6cb}
+    .span2{grid-column:1 / -1}
+    .ok{color:var(--ok)} .warn{color:var(--warn)}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px}
+    .bar{display:flex; gap:8px; align-items:center; justify-content:space-between}
+    .filehint{font-size:12px; color:#bcd0f0}
   </style>
 </head>
 <body>
-<h1>Filiación · OCR → JSON</h1>
+  <h1>DILIPOL · Filiación · OCR → JSON</h1>
 
-<div class="grid two">
-  <!-- 1) OCR -->
-  <div class="card">
-    <h2>1) Pegar OCR</h2>
-    <textarea id="ocr" placeholder="Pega aquí el texto OCR…"></textarea>
-    <div class="row" style="margin-top:8px;">
-      <button class="btn" id="pasteClipboard">Pegar del portapapeles</button>
-      <button class="btn secondary" id="clear">Limpiar</button>
-      <button class="btn" id="analyze">Analizar OCR</button>
-      <span id="status" class="muted"></span>
-    </div>
-  </div>
-
-  <!-- 2) Campos -->
-  <div class="card">
-    <h2>2) Revisar datos</h2>
-    <div class="fields">
-      <div><label>Nombre</label><input id="Nombre"></div>
-      <div><label>Apellidos (MAYÚSCULAS)</label><input id="Apellidos"></div>
-      <div><label>Tipo de documento</label><input id="Tipo" placeholder="DNI / NIE / PASAPORTE"></div>
-      <div><label>Nº Documento</label><input id="Numero"></div>
-      <div><label>Sexo</label>
-        <select id="Sexo"><option></option><option>MASCULINO</option><option>FEMENINO</option></select>
+  <div class="grid two">
+    <!-- 1) PEGADO OCR -->
+    <div class="card">
+      <h2>1) Pegar OCR</h2>
+      <textarea id="ocr" placeholder="Pega aquí el texto OCR obtenido con Lens / Atajo…"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="pasteClipboard">Pegar del portapapeles</button>
+        <button class="btn secondary" id="clear">Limpiar</button>
+        <button class="btn" id="analyze">Analizar OCR</button>
       </div>
-      <div><label>Nacionalidad</label><input id="Nacionalidad" placeholder="España / ESP / ..."></div>
-      <div class="span2"><label>Nombre de los Padres (Nombre1 y Nombre2)</label><input id="Padres"></div>
-      <div><label>Fecha de nacimiento</label><input id="Nacimiento" placeholder="dd/mm/aaaa"></div>
-      <div><label>Lugar de nacimiento</label><input id="Lugar"></div>
-      <div class="span2"><label>Domicilio</label><input id="Domicilio"></div>
-      <div><label>Teléfono</label><input id="Telefono"></div>
-      <div><label>Condición</label><input id="Condicion"></div>
+      <div id="status" class="muted" style="margin-top:6px"></div>
     </div>
-    <div class="row" style="margin-top:10px;">
-      <button class="btn" id="download">Descargar JSON</button>
-      <span class="muted">→ <span class="mono" id="fname">APELLIDOS.json</span></span>
+
+    <!-- 2) CAMPOS -->
+    <div class="card">
+      <h2>2) Revisar / completar</h2>
+      <div class="fields">
+        <div><label>Nombre</label><input id="Nombre"></div>
+        <div><label>Apellidos (MAYÚSCULAS)</label><input id="Apellidos"></div>
+        <div><label>Tipo de documento</label><input id="Tipo" placeholder="DNI / NIE / PASAPORTE"></div>
+        <div><label>Nº Documento</label><input id="Numero"></div>
+        <div>
+          <label>Sexo</label>
+          <select id="Sexo">
+            <option value=""></option>
+            <option>MASCULINO</option>
+            <option>FEMENINO</option>
+          </select>
+        </div>
+        <div><label>Nacionalidad</label><input id="Nacionalidad" placeholder="España / ESP / ..."></div>
+        <div class="span2"><label>Nombre de los Padres (Nombre1 y Nombre2)</label><input id="Padres" placeholder="Juan y Victoria"></div>
+        <div><label>Fecha de nacimiento</label><input id="Nacimiento" placeholder="dd/mm/aaaa"></div>
+        <div><label>Lugar de nacimiento</label><input id="Lugar"></div>
+        <div class="span2"><label>Domicilio</label><input id="Domicilio"></div>
+        <div><label>Teléfono</label><input id="Telefono" inputmode="numeric" pattern="[0-9 ]*"></div>
+        <div>
+          <label>Condición <span class="muted">(obligatorio)</span></label>
+          <select id="Condicion" required>
+            <option value=""></option>
+            <option>Requirente</option>
+            <option>Perjudicado</option>
+            <option>Testigo</option>
+            <option>Identificado</option>
+            <option>Detenido</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="bar" style="margin-top:12px">
+        <div class="row">
+          <button class="btn" id="download">Descargar JSON</button>
+          <span class="filehint">→ <span class="mono" id="fname">APELLIDOS.json</span></span>
+        </div>
+      </div>
     </div>
   </div>
-</div>
 
-<script>
-/* Utilidades */
-const titleCase = s => s.toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)/g, w => w.charAt(0).toUpperCase() + w.slice(1));
-const collapseSpaces = s => s.replace(/\s+/g,' ').trim();
-const onlyMRZ = s => s.toUpperCase().replace(/[^A-Z0-9<]/g,'');
+  <script>
+    /* === Utilidades === */
+    const titleCase = s => s.toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)/g, w => w.charAt(0).toUpperCase() + w.slice(1));
+    const collapseSpaces = s => s.replace(/\s+/g,' ').trim();
+    const onlyMRZ = s => s.toUpperCase().replace(/[^A-Z0-9<]/g,'');
 
-/* Encabezados tolerantes */
-const isDomicilio  = l => /(DOMI|COMI|D0MI|DOMIL)/.test(l);
-const isNacimiento = l => (/(LUGA|LIGAR|LUGOR|LUGAR)/.test(l) && /(NACI|NADMI|NADIM|NACIM)/.test(l));
-const isPadres     = l => /(HIJ[O0]\/A DE|HIO\/A DE|HIIO\/A DE|HJIO\/A DE|HUDIA DE|MADIA DE|PADRES)/.test(l);
-const isEquipo     = l => /EQUIPO/.test(l);
+    /* Encabezados tolerantes (incluye errores OCR) */
+    const isDomicilio  = l => /(DOMI|COMI|D0MI|DOMIL|DOMlC|D0MIC)/.test(l);
+    const isNacimiento = l => (/(L[UI]G[AO]R|LAGAR|LIGAR|LUGOR|LUGAR)/.test(l) && /(NAC[II1]M[EI]ENT|NACIM|NACIMENTO|NADMI|NADIM)/.test(l));
+    const isPadres     = l => /(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|HIIO\/?A DE|HJIO\/?A DE|NUOIA DE|N[IU]OIA DE|HUDIA DE|MADIA DE|PADRES)/.test(l);
+    const isEquipo     = l => /EQUIPO/.test(l);
 
-/* Cortes de bloque: MRZ o códigos sueltos */
-const isMRZLike    = l => /<{2,}/.test(l) || (l.includes('<') && /^[A-Z0-9<]{6,}$/.test(l));
-const isCodeToken  = l => /^[A-Z0-9]{5,12}$/.test(l); // p.ej. 1L6D1, 28391A6DK
+    /* Cortes de bloque: MRZ o códigos sueltos */
+    const isMRZLike    = l => /<{2,}/.test(l) || (l.includes('<') && /^[A-Z0-9<]{6,}$/.test(l));
+    const isCodeToken  = l => /^[A-Z0-9]{5,12}$/.test(l);   // p.ej. 1L601, 28391A6DK
 
-/* DNI checksum */
-const dniLetter = n => "TRWAGMYFPDXBNJZSQVHLCKE"[parseInt(n,10)%23];
+    /* Heurística de dirección sin encabezado */
+    const isAddressLine = l =>
+      /(C\.|CALLE|CL |AVDA|AVENIDA|PZA|PLAZA|CR |CARRETERA|CM |CAMINO|CTRA|BARRIO|URB|URBANIZACION)/.test(l)
+      || /\b[0-9]{1,4}[A-Z]?\b/.test(l);
 
-/* MRZ: recomponer si está partida */
-function extractMRZ(lines){
-  const rawMRZ = lines.filter(l => l.includes('<'));
-  const L3 = (rawMRZ.slice().reverse().find(l=>l.includes("<<"))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-  const L2 = (lines.find(l=>/[0-9]{6}.*[MF].*[A-Z]{3}/.test(l))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-  let L1 = (lines.find(l=>/<{2,}/.test(l))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-  if(!L1 && rawMRZ.length>=2){
-    const j = rawMRZ.findIndex(l=>/<{2,}/.test(l));
-    if(j>0){ L1 = onlyMRZ((rawMRZ[j-1]||"")+(rawMRZ[j]||"")); }
-  }
-  return {L1,L2,L3};
-}
+    /* DNI checksum */
+    const dniLetter = n => "TRWAGMYFPDXBNJZSQVHLCKE"[parseInt(n,10)%23];
 
-/* DNI por cerco estricto (primer bloque ‘<<’) */
-function dniFromL1(L1){
-  if(!L1) return "";
-  const j = L1.indexOf("<<") >= 0 ? L1.indexOf("<<") : L1.indexOf("<");
-  if(j < 9) return "";
-  const cand = L1.slice(j-9, j);                      // 9 previos al primer '<'
-  if(!/^[0-9]{8}[A-Z]$/.test(cand)) return "";
-  return dniLetter(cand.slice(0,8)) === cand.slice(-1) ? cand : "";
-}
-
-/* Tipo de documento (conservador) */
-function tipoDocumento(L1){
-  if(/^ID.*ESP/.test(L1)) return "DNI";
-  if(/^I.*ESP/.test(L1) && /[XYZ][0-9]{7}[A-Z]/.test(L1)) return "NIE";
-  if(/^P</.test(L1)) return "PASAPORTE";
-  return "";
-}
-
-/* Nombre y apellidos desde L3 */
-function nombreApellidos(L3){
-  if(!L3 || !L3.includes("<<")) return {nombre:"", apellidos:""};
-  const i = L3.indexOf("<<");
-  let ap_raw  = L3.slice(0,i).replace(/^<+|<+$/g,'').replace(/<+/g,' ').trim();
-  let nom_raw = L3.slice(i+2).replace(/^<+|<+$/g,'').replace(/<+/g,' ').trim();
-  return {nombre: titleCase(nom_raw), apellidos: ap_raw.toUpperCase()};
-}
-
-/* Fecha, sexo, nacionalidad desde L2 */
-function datosDesdeL2(L2){
-  let fecha="", sexo="", nac="";
-  if(L2){
-    const m = L2.match(/([0-9]{2})([0-9]{2})([0-9]{2})/);
-    if(m){
-      const yy = +m[1], mm=m[2], dd=m[3];
-      const year = yy >= 30 ? 1900+yy : 2000+yy;
-      fecha = `${dd}/${mm}/${year}`;
+    /* MRZ: recomponer si está partida */
+    function extractMRZ(lines){
+      const rawMRZ = lines.filter(l => l.includes('<'));
+      const L3 = (rawMRZ.slice().reverse().find(l=>l.includes("<<"))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
+      const L2 = (lines.find(l=>/[0-9]{6}.*[MF].*[A-Z]{3}/.test(l))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
+      let L1 = (lines.find(l=>/<{2,}/.test(l))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
+      if(!L1 && rawMRZ.length>=2){
+        const j = rawMRZ.findIndex(l=>/<{2,}/.test(l));
+        if(j>0){ L1 = onlyMRZ((rawMRZ[j-1]||"")+(rawMRZ[j]||"")); }
+      }
+      return {L1,L2,L3};
     }
-    const sx = L2.match(/[MF]/);
-    if(sx) sexo = sx[0]==="F" ? "FEMENINO" : "MASCULINO";
-    const nat = (L2.match(/[A-Z]{3}(?=<{2,}|$)/g)||[]).pop() || "";
-    nac = nat==="ESP" ? "España" : (nat || "");
-  }
-  return {fecha, sexo, nac};
-}
 
-/* Bloques por encabezados tolerantes con cortes duros */
-function extractBlocks(ocrText){
-  const raw = ocrText.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
-  const up  = raw.map(s=>s.toUpperCase());
-
-  function nextStop(start){
-    for(let k=start+1;k<up.length;k++){
-      const l=up[k];
-      if(isDomicilio(l)||isNacimiento(l)||isPadres(l)||isEquipo(l)||isMRZLike(l)||isCodeToken(l)) return k;
+    /* DNI por cerco estricto (primer ‘<<’) */
+    function dniFromL1(L1){
+      if(!L1) return "";
+      const j = L1.indexOf("<<")>=0 ? L1.indexOf("<<") : L1.indexOf("<");
+      if(j < 9) return "";
+      const cand = L1.slice(j-9, j);           // 9 previos al primer '<'
+      if(!/^[0-9]{8}[A-Z]$/.test(cand)) return "";
+      return dniLetter(cand.slice(0,8)) === cand.slice(-1) ? cand : "";
     }
-    return up.length;
-  }
 
-  // DOMICILIO
-  let domicilio="";
-  const dIdx = up.findIndex(isDomicilio);
-  if(dIdx>=0){
-    const end = nextStop(dIdx);
-    const lines = raw.slice(dIdx+1,end)
-      .filter(s=>!/^DNI$/.test(s.toUpperCase()))
-      .filter(s=>!isMRZLike(s.toUpperCase()))
-      .filter(s=>!isCodeToken(s.toUpperCase()));
-    domicilio = titleCase(collapseSpaces(lines.join(', ')));
-  }
-
-  // NACIMIENTO
-  let nacimiento="";
-  const nIdx = up.findIndex(isNacimiento);
-  if(nIdx>=0){
-    const end = nextStop(nIdx);
-    const lines = raw.slice(nIdx+1,end)
-      .filter(s=>!isMRZLike(s.toUpperCase()))
-      .filter(s=>!isCodeToken(s.toUpperCase()));
-    nacimiento = titleCase(collapseSpaces(lines.join(', ')));
-  }
-
-  // PADRES
-  let padres="";
-  const pIdx = up.findIndex(isPadres);
-  if(pIdx>=0){
-    const next = raw.slice(pIdx+1).find(s=>s.trim().length>0 && !isMRZLike(s.toUpperCase()) && !isCodeToken(s.toUpperCase())) || "";
-    if(next){
-      const parts = next.split(/[\/,;]+/).map(collapseSpaces);
-      const p1 = parts[0] ? titleCase(parts[0]) : "";
-      const p2 = parts[1] ? titleCase(parts[1]) : "";
-      padres = (p1||p2) ? `${p1} y ${p2}`.trim() : "";
+    /* Tipo de documento: conservador + regla solicitada (DNI si número válido) */
+    function tipoDocumento(L1, numeroValido){
+      if(numeroValido) return "DNI";                 // <= cambio solicitado
+      if(/^ID.*ESP/.test(L1)) return "DNI";
+      if(/^I.*ESP/.test(L1) && /[XYZ][0-9]{7}[A-Z]/.test(L1)) return "NIE";
+      if(/^P</.test(L1)) return "PASAPORTE";
+      return "";
     }
-  }
 
-  return {raw, up, domicilio, nacimiento, padres};
-}
-
-/* Pegar del portapapeles con fallback */
-document.getElementById('pasteClipboard').addEventListener('click', async ()=>{
-  const ta = document.getElementById('ocr');
-  try{
-    const txt = await navigator.clipboard.readText();
-    if(txt && txt.trim()){
-      ta.value = txt; document.getElementById('status').textContent = "OCR pegado.";
-      return;
+    /* Nombre y apellidos desde L3 */
+    function nombreApellidos(L3){
+      if(!L3 || !L3.includes("<<")) return {nombre:"", apellidos:""};
+      const i = L3.indexOf("<<");
+      let ap_raw  = L3.slice(0,i).replace(/^<+|<+$/g,'').replace(/<+/g,' ').trim();
+      let nom_raw = L3.slice(i+2).replace(/^<+|<+$/g,'').replace(/<+/g,' ').trim();
+      return {nombre: titleCase(nom_raw), apellidos: ap_raw.toUpperCase()};
     }
-    throw new Error("Empty");
-  }catch(e){
-    const txt = prompt("Pega aquí el texto OCR:", "");
-    if(txt && txt.trim()){
-      ta.value = txt; document.getElementById('status').textContent = "OCR pegado (compat).";
-    }else{
-      alert("No se pudo leer del portapapeles. Pega manualmente en el área y analiza.");
+
+    /* Fecha, sexo, nacionalidad desde L2 */
+    function datosDesdeL2(L2){
+      let fecha="", sexo="", nac="";
+      if(L2){
+        const m = L2.match(/([0-9]{2})([0-9]{2})([0-9]{2})/);
+        if(m){
+          const yy = +m[1], mm=m[2], dd=m[3];
+          const year = yy >= 30 ? 1900+yy : 2000+yy;
+          fecha = `${dd}/${mm}/${year}`;
+        }
+        const sx = L2.match(/[MF]/);
+        if(sx) sexo = sx[0]==="F" ? "FEMENINO" : "MASCULINO";
+        const nat = (L2.match(/[A-Z]{3}(?=<{2,}|$)/g)||[]).pop() || "";
+        nac = nat==="ESP" ? "España" : (nat || "");
+      }
+      return {fecha, sexo, nac};
     }
-  }
-});
 
-/* Auto-analizar al pegar manualmente */
-document.getElementById('ocr').addEventListener('paste', ()=>{
-  setTimeout(()=>document.getElementById('analyze').click(), 40);
-});
+    /* Bloques por encabezados tolerantes con cortes duros + domicilio implícito */
+    function extractBlocks(ocrText){
+      const raw = ocrText.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(Boolean);
+      const up  = raw.map(s=>s.toUpperCase());
 
-/* Limpiar */
-document.getElementById('clear').addEventListener('click', ()=>{
-  document.getElementById('ocr').value="";
-  ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-    .forEach(id=>document.getElementById(id).value="");
-  document.getElementById('status').textContent="";
-  updateFilename();
-});
+      const nextStop = (idx)=>{
+        for(let k=idx+1;k<up.length;k++){
+          const L = up[k];
+          if (isDomicilio(L) || isNacimiento(L) || isPadres(L) || isEquipo(L) || isMRZLike(L) || isCodeToken(L)) return k;
+        }
+        return up.length;
+      };
 
-/* Analizar OCR → campos */
-document.getElementById('analyze').addEventListener('click', ()=>{
-  const ocr = document.getElementById('ocr').value || "";
-  if(!ocr.trim()){ document.getElementById('status').textContent = "Pega el OCR primero."; return; }
+      // DOMICILIO con encabezado
+      let domicilio="";
+      const dIdx = up.findIndex(isDomicilio);
+      if(dIdx>=0){
+        const end = nextStop(dIdx);
+        const lines = raw.slice(dIdx+1,end)
+          .filter(s=>!/^DNI$/.test(s.toUpperCase()))
+          .filter(s=>!isMRZLike(s.toUpperCase()))
+          .filter(s=>!isCodeToken(s.toUpperCase()));
+        domicilio = titleCase(collapseSpaces(lines.join(', ')));
+      }
 
-  const {raw, up, domicilio, nacimiento, padres} = extractBlocks(ocr);
-  const {L1, L2, L3} = extractMRZ(up);
-  const {nombre, apellidos} = nombreApellidos(L3);
-  const {fecha, sexo, nac} = datosDesdeL2(L2);
-  const numero = dniFromL1(L1);
-  const tipo = tipoDocumento(L1);
+      // DOMICILIO implícito si no hay encabezado
+      if(!domicilio){
+        let end0 = up.length;
+        for(let k=0;k<up.length;k++){
+          const L = up[k];
+          if (isDomicilio(L)||isNacimiento(L)||isPadres(L)||isEquipo(L)||isMRZLike(L)) { end0 = k; break; }
+        }
+        const addrLines = [];
+        for(let i=0;i<end0;i++){
+          const L = up[i];
+          if (isCodeToken(L)) continue;
+          if (isAddressLine(L)) addrLines.push(raw[i]);
+        }
+        if(addrLines.length){
+          domicilio = titleCase(collapseSpaces(addrLines.join(', ')));
+        }
+      }
 
-  // Rellenar
-  Nombre.value = titleCase(nombre || "");
-  Apellidos.value = (apellidos || "").toUpperCase();
-  Tipo.value = tipo;
-  Numero.value = numero;
-  Sexo.value = sexo;
-  Nacionalidad.value = nac === "ESP" ? "España" : (nac || "");
-  Padres.value = padres;
-  Nacimiento.value = fecha;
-  Lugar.value = nacimiento;
-  Domicilio.value = domicilio;
+      // NACIMIENTO
+      let nacimiento="";
+      const nIdx = up.findIndex(isNacimiento);
+      if(nIdx>=0){
+        const end = nextStop(nIdx);
+        const lines = raw.slice(nIdx+1,end)
+          .filter(s=>!isMRZLike(s.toUpperCase()))
+          .filter(s=>!isCodeToken(s.toUpperCase()));
+        nacimiento = titleCase(collapseSpaces(lines.join(', ')));
+      }
 
-  // Estado
-  const st = [];
-  st.push(L1 ? "MRZ L1 ✓" : "MRZ L1 ✗");
-  st.push(L2 ? "L2 ✓" : "L2 ✗");
-  st.push(L3 ? "L3 ✓" : "L3 ✗");
-  st.push(numero ? "DNI ✓" : "DNI ✗");
-  document.getElementById('status').innerHTML = st.map(s=>s.includes("✓")?`<span class="ok">${s}</span>`:`<span class="warn">${s}</span>`).join(" · ");
-  updateFilename();
-});
+      // PADRES (tolerante, acepta NUOIA DE / variaciones)
+      let padres="";
+      const pIdx = up.findIndex(isPadres);
+      if(pIdx>=0){
+        const next = raw.slice(pIdx+1).find(s=>s.trim().length>0 && !isMRZLike(s.toUpperCase()) && !isCodeToken(s.toUpperCase())) || "";
+        if(next){
+          const parts = next.split(/[\/,;]+/).map(collapseSpaces);
+          const p1 = parts[0] ? titleCase(parts[0]) : "";
+          const p2 = parts[1] ? titleCase(parts[1]) : "";
+          padres = (p1||p2) ? `${p1} y ${p2}`.trim() : "";
+        }
+      }
 
-/* Nombre de archivo dinámico */
-function updateFilename(){
-  const ap = (Apellidos.value || "").trim().replace(/[\/\\]+/g,'-').replace(/\s+/g,' ');
-  document.getElementById('fname').textContent = (ap ? ap : "APELLIDOS") + ".json";
-}
-document.getElementById('Apellidos').addEventListener('input', updateFilename);
+      return {raw, up, domicilio, nacimiento, padres};
+    }
 
-/* Descargar JSON */
-document.getElementById('download').addEventListener('click', ()=>{
-  const data = {
-    "Nombre": Nombre.value || "",
-    "Apellidos": (Apellidos.value || "").toUpperCase(),
-    "Tipo de documento": Tipo.value || "",
-    "Nº Documento": Numero.value || "",
-    "Sexo": Sexo.value || "",
-    "Nacionalidad": (Nacionalidad.value === "ESP" ? "España" : (Nacionalidad.value || "")),
-    "Nombre de los Padres": Padres.value || "",
-    "Fecha de nacimiento": Nacimiento.value || "",
-    "Lugar de nacimiento": Lugar.value || "",
-    "Domicilio": Domicilio.value || "",
-    "Teléfono": Telefono.value || "",
-    "Condición": Condicion.value || ""
-  };
-  const ap = (Apellidos.value.trim() || "APELLIDOS") + ".json";
-  const a = document.createElement('a');
-  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data,null,2));
-  a.download = ap;
-  document.body.appendChild(a); a.click(); a.remove();
-});
-</script>
+    /* === Pegar del portapapeles con fallback === */
+    document.getElementById('pasteClipboard').addEventListener('click', async ()=>{
+      const ta = document.getElementById('ocr');
+      try{
+        const txt = await navigator.clipboard.readText();
+        if(txt && txt.trim()){
+          ta.value = txt; document.getElementById('status').textContent = "OCR pegado.";
+          return;
+        }
+        throw new Error("Empty");
+      }catch(e){
+        const txt = prompt("Pega aquí el texto OCR:", "");
+        if(txt && txt.trim()){
+          ta.value = txt; document.getElementById('status').textContent = "OCR pegado (compat).";
+        }else{
+          alert("No se pudo leer del portapapeles. Pega manualmente en el área y ANALIZAR.");
+        }
+      }
+    });
+
+    /* Auto-analizar al pegar */
+    document.getElementById('ocr').addEventListener('paste', ()=>{
+      setTimeout(()=>document.getElementById('analyze').click(), 40);
+    });
+
+    /* Limpiar */
+    document.getElementById('clear').addEventListener('click', ()=>{
+      document.getElementById('ocr').value="";
+      ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
+        .forEach(id=>document.getElementById(id).value="");
+      document.getElementById('status').textContent="";
+      updateFilename();
+    });
+
+    /* Analizar OCR → campos */
+    document.getElementById('analyze').addEventListener('click', ()=>{
+      const ocr = document.getElementById('ocr').value || "";
+      if(!ocr.trim()){ document.getElementById('status').textContent = "Pega el OCR primero."; return; }
+
+      const {raw, up, domicilio, nacimiento, padres} = extractBlocks(ocr);
+      const {L1, L2, L3} = extractMRZ(up);
+      const {nombre, apellidos} = nombreApellidos(L3);
+      const {fecha, sexo, nac} = datosDesdeL2(L2);
+      const numero = dniFromL1(L1);
+      const tipo = tipoDocumento(L1, !!numero);   // <= fuerza DNI si número válido
+
+      // Relleno
+      Nombre.value       = titleCase(nombre || "");
+      Apellidos.value    = (apellidos || "").toUpperCase();
+      Tipo.value         = tipo;
+      Numero.value       = numero;
+      Sexo.value         = sexo;
+      Nacionalidad.value = nac === "ESP" ? "España" : (nac || "");
+      Padres.value       = padres;
+      Nacimiento.value   = fecha;
+      Lugar.value        = nacimiento;
+      Domicilio.value    = domicilio;
+
+      // Estado
+      const st = [];
+      st.push(L1 ? "MRZ L1 ✓" : "MRZ L1 ✗");
+      st.push(L2 ? "L2 ✓" : "L2 ✗");
+      st.push(L3 ? "L3 ✓" : "L3 ✗");
+      st.push(numero ? "DNI ✓" : "DNI ✗");
+      document.getElementById('status').innerHTML = st.map(s=>s.includes("✓")?`<span class="ok">${s}</span>`:`<span class="warn">${s}</span>`).join(" · ");
+      updateFilename();
+    });
+
+    /* Nombre de archivo dinámico */
+    function updateFilename(){
+      const ap = (Apellidos.value || "").trim().replace(/[\/\\]+/g,'-').replace(/\s+/g,' ');
+      document.getElementById('fname').textContent = (ap ? ap : "APELLIDOS") + ".json";
+    }
+    document.getElementById('Apellidos').addEventListener('input', updateFilename);
+
+    /* Descargar JSON (Condición obligatoria) */
+    document.getElementById('download').addEventListener('click', ()=>{
+      if(!Condicion.value){
+        alert("Selecciona la Condición antes de descargar (Requirente, Perjudicado, Testigo, Identificado o Detenido).");
+        Condicion.focus();
+        return;
+      }
+      const data = {
+        "Nombre": Nombre.value || "",
+        "Apellidos": (Apellidos.value || "").toUpperCase(),
+        "Tipo de documento": Tipo.value || "",
+        "Nº Documento": Numero.value || "",
+        "Sexo": Sexo.value || "",
+        "Nacionalidad": (Nacionalidad.value === "ESP" ? "España" : (Nacionalidad.value || "")),
+        "Nombre de los Padres": Padres.value || "",
+        "Fecha de nacimiento": Nacimiento.value || "",
+        "Lugar de nacimiento": Lugar.value || "",
+        "Domicilio": Domicilio.value || "",
+        "Teléfono": Telefono.value || "",
+        "Condición": Condicion.value
+      };
+      const ap = (Apellidos.value.trim() || "APELLIDOS") + ".json";
+      const a = document.createElement('a');
+      a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data,null,2));
+      a.download = ap;
+      document.body.appendChild(a); a.click(); a.remove();
+    });
+  </script>
 </body>
 </html>

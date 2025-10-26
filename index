@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flujo OCR con Google Lens (sin API)</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 16px; color: #111; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    .row { display: grid; gap: 12px; margin-bottom: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #ccc; background: #f7f7f7; padding: 10px 14px; border-radius: 8px; cursor: pointer; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: #111; color: #fff; border-color: #111; }
+    .hint { font-size: 13px; color: #444; }
+    #preview { width: 100%; max-height: 40vh; object-fit: contain; border-radius: 8px; background: #fafafa; }
+    textarea { width: 100%; min-height: 28vh; resize: vertical; padding: 10px; border-radius: 8px; border: 1px solid #ccc; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .twocol { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    @media (min-width: 720px) { .twocol { grid-template-columns: 1fr 1fr; } }
+    .pill { background: #eef6ff; color: #0b57d0; padding: 4px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #cfe0ff;}
+  </style>
+</head>
+<body>
+  <h1>Flujo de captura con Google Lens</h1>
+
+  <div class="row card">
+    <strong>1) Haz foto del documento</strong>
+    <input id="camera" class="btn" type="file" accept="image/*" capture="environment" />
+    <img id="preview" alt="Vista previa" />
+    <p class="hint">Android: tras ver la imagen aquí, <b>mantén pulsado</b> sobre la foto y toca <b>“Buscar con Google Lens”</b>. En iPhone, abre la app Google → Lens.</p>
+    <div>
+      <a class="btn" id="openLens" href="https://lens.google.com/upload" target="_blank" rel="noopener">Abrir Lens (subir imagen)</a>
+      <button class="btn" id="copyTip" type="button">¿Cómo lanzar Lens?</button>
+    </div>
+  </div>
+
+  <div class="row twocol">
+    <div class="card">
+      <strong>2) Pega aquí el texto que te dé Lens (OCR bruto)</strong>
+      <textarea id="ocr" placeholder="Pega aquí el texto OCR que copie Lens…"></textarea>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button class="btn" id="paste" type="button">Pegar del portapapeles</button>
+        <button class="btn" id="clearOcr" type="button">Limpiar</button>
+      </div>
+      <p class="hint">La API del portapapeles necesita un gesto del usuario y permiso del navegador.</p>
+    </div>
+
+    <div class="card">
+      <strong>3) Siguiente paso</strong>
+      <p class="hint">Cuando quieras, aquí añadiremos el botón <span class="pill">Procesar OCR</span> que aplicará tus reglas y generará el JSON.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn primary" id="dummyProcess" type="button">(Próximo) Procesar OCR → JSON</button>
+      </div>
+      <pre id="result" class="hint" style="white-space:pre-wrap;"></pre>
+    </div>
+  </div>
+
+  <script>
+    // Vista previa de la foto
+    const input = document.getElementById('camera');
+    const preview = document.getElementById('preview');
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (!file) { preview.src = ""; return; }
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+    });
+
+    // Ayuda rápida para lanzar Lens según dispositivo
+    document.getElementById('copyTip').addEventListener('click', () => {
+      const tip =
+`Cómo usar Google Lens con esta página:
+
+• Android (Chrome):
+  1) Pulsa en "Hacer foto" y toma la imagen del documento.
+  2) Cuando veas la vista previa aquí, MANTÉN PULSADO sobre la foto.
+  3) Toca "Buscar con Google Lens".
+  4) En Lens, copia el texto y vuelve para pegarlo aquí.
+
+• iPhone:
+  1) Abre la app Google y toca el icono de Lens.
+  2) Captura o sube la imagen.
+  3) Copia el texto y vuelve para pegarlo aquí.
+
+• Escritorio:
+  1) Abre https://lens.google.com/upload
+  2) Sube la imagen y copia el texto OCR.
+  3) Vuelve para pegarlo aquí.`;
+      navigator.clipboard?.writeText(tip).catch(()=>{});
+      alert('He copiado las instrucciones para ti. Pégalas donde quieras.');
+    });
+
+    // Pegar del portapapeles → textarea
+    document.getElementById('paste').addEventListener('click', async () => {
+      const ta = document.getElementById('ocr');
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) ta.value = text;
+        else alert('El portapapeles está vacío o el navegador no concedió permiso.');
+      } catch (e) {
+        alert('El navegador bloqueó el acceso al portapapeles. Pega manualmente (Ctrl/Cmd + V).');
+      }
+    });
+
+    // Limpiar textarea
+    document.getElementById('clearOcr').addEventListener('click', () => {
+      document.getElementById('ocr').value = '';
+      document.getElementById('result').textContent = '';
+    });
+
+    // Botón placeholder de "Procesar" (sin lógica aún, a petición tuya)
+    document.getElementById('dummyProcess').addEventListener('click', () => {
+      document.getElementById('result').textContent =
+        'Aquí aparecerá el JSON cuando integremos tus reglas deterministas.\n\n' +
+        'Pasos próximos: aplicar CERCO ESTRICTO para DNI + detección tolerante de encabezados.';
+    });
+  </script>
+</body>
+</html>

@@ -36,6 +36,7 @@
 
   <div class="grid two">
     <div class="card">
+     <button class="btn secondary" id="pasteClipboard">Pegar del portapapeles</button>
       <h2>1) Pegar OCR bruto (de Google Lens / Atajo iPhone)</h2>
       <textarea id="ocr" placeholder="Pega aquí el texto exacto que te devuelve Lens…"></textarea>
       <div class="row" style="margin-top:8px;">
@@ -44,7 +45,7 @@
         <span id="status" class="muted"></span>
       </div>
       <div class="footer">
-        Reglas: cerco estricto para DNI (primer bloque &laquo;&laquo;&laquo;), MRZ para nombre/apellidos/sexo/fecha/nacionalidad, encabezados tolerantes (DOMICILIO, LUGAR DE NACIMIENTO, HIJO/A DE).
+        Reglas: cerco estricto para DNI, MRZ para nombre/apellidos/sexo/fecha/nacionalidad, encabezados tolerantes (DOMICILIO, LUGAR DE NACIMIENTO, HIJO/A DE).
       </div>
     </div>
 
@@ -118,30 +119,29 @@
       .replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)/g, w => w.charAt(0).toUpperCase() + w.slice(1));
 
     const onlyMRZ = s => s.toUpperCase().replace(/[^A-Z0-9<]/g,'');
-
     const collapseSpaces = s => s.replace(/\s+/g,' ').trim();
 
-    // Detectores tolerantes de encabezados
-    const isDomicilio = l => /DOMI|COMI/.test(l);
-    const isNacimiento = l => /(LUGA|LIGAR|LUGOR).*(NACI|NADMI|NADIM)/.test(l) || /(NACI|NADMI|NADIM)/.test(l) && /(LUGA|LIGAR|LUGOR)/.test(l);
-    const isPadres = l => /(HIJO\/A DE|HIIO\/A DE|HIJ0\/A DE|HUDIA DE|MADIA DE)/.test(l);
-    const isEquipo = l => /EQUIPO/.test(l);
+    // Encabezados tolerantes (incluye errores frecuentes)
+    const isDomicilio  = l => /(DOMI|COMI|D0MI|DOMIL)/.test(l);
+    const isNacimiento = l => (/(LUGA|LIGAR|LUGOR|LUGAR)/.test(l) && /(NACI|NADMI|NADIM|NACIM)/.test(l));
+    const isPadres     = l => /(HIJ[O0]\/A DE|HIO\/A DE|HIIO\/A DE|HJIO\/A DE|HUDIA DE|MADIA DE|PADRES)/.test(l);
+    const isEquipo     = l => /EQUIPO/.test(l);
+
+    // Cortes duros de bloque: MRZ o códigos sueltos
+    const isMRZLike = l => /<</.test(l) || /<{2,}/.test(l) || /^[A-Z0-9<]{6,}$/.test(l) && l.includes('<');
+    const isCodeToken = l => /^[A-Z0-9]{5,12}$/.test(l); // p.ej. 1L6D1, 28391A6DK
 
     // Checksum DNI
     const dniLetter = n => "TRWAGMYFPDXBNJZSQVHLCKE"[parseInt(n,10)%23];
 
-    // Extraer MRZ (intentando recomponer si está partida)
+    // Extraer MRZ (recomponer si está partida)
     function extractMRZ(lines){
       const rawMRZ = lines.filter(l => /</.test(l));
-      // L3: la última que lleva '<<'
       const L3 = (rawMRZ.slice().reverse().find(l=>l.includes("<<"))||"").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-      // L2: línea con fecha y sexo + país (buscar 6 dígitos + [MF] + país)
       const L2 = (rawMRZ.find(l => /[0-9]{6}.*[MF].*[A-Z]{3}/.test(l)) || "").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-      // L1: primera con bloque de cerco (<<) y número cerca
-      let L1 = (rawMRZ.find(l => /<<</.test(l) || /<</.test(l)) || "").toUpperCase().replace(/[^A-Z0-9<]/g,'');
-      // Si L1 quedó vacía, prueba a unir líneas contiguas
+      let L1 = (rawMRZ.find(l => /<{2,}/.test(l)) || "").toUpperCase().replace(/[^A-Z0-9<]/g,'');
       if(!L1 && rawMRZ.length>=2){
-        const j = rawMRZ.findIndex(l=>/<<</.test(l)||/<</.test(l));
+        const j = rawMRZ.findIndex(l=>/<{2,}/.test(l));
         if(j>0){ L1 = onlyMRZ((rawMRZ[j-1]||"") + (rawMRZ[j]||"")); }
       }
       return {L1, L2, L3};
@@ -150,14 +150,11 @@
     // DNI por primer cerco (estricto)
     function dniFromL1_CercoEstricto(L1){
       if(!L1) return "";
-      // localizar primer bloque de '<' (al menos 2)
-      const idx = L1.indexOf("<<") >= 0 ? L1.indexOf("<<") : L1.indexOf("<");
-      if(idx <= 0) return "";
-      // ventana estricta: 9 chars inmediatamente anteriores
-      if(idx < 9) return "";
-      const cand = L1.slice(idx-9, idx);
+      const idxBlock = L1.indexOf("<<") >= 0 ? L1.indexOf("<<") : L1.indexOf("<");
+      if(idxBlock <= 0) return "";
+      if(idxBlock < 9) return "";
+      const cand = L1.slice(idxBlock-9, idxBlock);
       if(!/^[0-9]{8}[A-Z]$/.test(cand)) return "";
-      // validar letra
       const num = cand.slice(0,8), letter = cand.slice(-1);
       return dniLetter(num) === letter ? cand : "";
     }
@@ -183,7 +180,7 @@
       return {nombre, apellidos};
     }
 
-    // Fecha de nacimiento y sexo y nacionalidad desde L2
+    // Fecha de nacimiento / sexo / nacionalidad desde L2
     function datosDesdeL2(L2){
       let fecha="", sexo="", nac="";
       if(L2){
@@ -201,40 +198,45 @@
       return {fecha, sexo, nac};
     }
 
-    // Bloques de texto OCR por encabezados tolerantes
+    // Extraer bloques por encabezados tolerantes con cortes duros (MRZ/códigos/otro encabezado)
     function extractBlocks(ocrText){
       const raw = ocrText.replace(/\r/g,'').split('\n').map(s=>s.trim()).filter(s=>s.length>0);
       const upper = raw.map(s=>s.toUpperCase());
       let domicilio="", nacimiento="", padres="";
-      // indices de encabezados tolerantes
-      const idxs = upper.map((l,idx)=>({l,idx}))
-        .filter(o => isDomicilio(o.l)||isNacimiento(o.l)||isPadres(o.l)||isEquipo(o.l));
-      function nextHeader(after){
-        const n = idxs.find(o=>o.idx>after);
-        return n ? n.idx : raw.length;
+
+      function nextHeaderIndex(start){
+        for(let k=start+1;k<upper.length;k++){
+          const l = upper[k];
+          if(isDomicilio(l) || isNacimiento(l) || isPadres(l) || isEquipo(l) || isMRZLike(l) || isCodeToken(l)) return k;
+        }
+        return upper.length;
       }
+
       // DOMICILIO
       const dIdx = upper.findIndex(isDomicilio);
       if(dIdx>=0){
-        const end = nextHeader(dIdx);
-        domicilio = collapseSpaces(
-          raw.slice(dIdx+1, end)
-             .filter(s=>!/^\s*DNI\s*$/.test(s)) // ruido frecuente
-             .join(', ')
-        );
-        domicilio = titleCase(domicilio);
+        const end = nextHeaderIndex(dIdx);
+        const lines = raw.slice(dIdx+1, end)
+          .filter(s=>!/^DNI$/.test(s.toUpperCase()))
+          .filter(s=>!isMRZLike(s.toUpperCase()))
+          .filter(s=>!isCodeToken(s.toUpperCase()));
+        domicilio = titleCase(collapseSpaces(lines.join(', ')));
       }
+
       // NACIMIENTO
       const nIdx = upper.findIndex(isNacimiento);
       if(nIdx>=0){
-        const end = nextHeader(nIdx);
-        nacimiento = collapseSpaces(raw.slice(nIdx+1, end).join(', '));
-        nacimiento = titleCase(nacimiento);
+        const end = nextHeaderIndex(nIdx);
+        const lines = raw.slice(nIdx+1, end)
+          .filter(s=>!isMRZLike(s.toUpperCase()))
+          .filter(s=>!isCodeToken(s.toUpperCase()));
+        nacimiento = titleCase(collapseSpaces(lines.join(', ')));
       }
-      // PADRES (toma la siguiente línea no vacía)
+
+      // PADRES
       const pIdx = upper.findIndex(isPadres);
       if(pIdx>=0){
-        const next = raw.slice(pIdx+1).find(s=>s.trim().length>0) || "";
+        const next = raw.slice(pIdx+1).find(s=>s.trim().length>0 && !isMRZLike(s.toUpperCase()) && !isCodeToken(s.toUpperCase())) || "";
         if(next){
           const parts = next.split(/[\/,;]+/).map(s=>collapseSpaces(s));
           const p1 = parts[0] ? titleCase(parts[0]) : "";
@@ -262,24 +264,16 @@
       const tipo = tipoDocumento(L1);
 
       // Rellenar UI
-      document.getElementById('Nombre').value = nombre;
-      document.getElementById('Apellidos').value = apellidos;
+      document.getElementById('Nombre').value = titleCase(nombre || "");
+      document.getElementById('Apellidos').value = (apellidos || "").toUpperCase();
       document.getElementById('Tipo').value = tipo;
       document.getElementById('Numero').value = numero;
       document.getElementById('Sexo').value = sexo;
-      document.getElementById('Nacionalidad').value = nac;
+      document.getElementById('Nacionalidad').value = nac === "ESP" ? "España" : (nac || "");
       document.getElementById('Padres').value = padres;
       document.getElementById('Nacimiento').value = fecha;
       document.getElementById('Lugar').value = nacimiento;
       document.getElementById('Domicilio').value = domicilio;
-
-      // Forzar formatos
-      document.getElementById('Apellidos').value = document.getElementById('Apellidos').value.toUpperCase();
-      if(document.getElementById('Nacionalidad').value === "ESP") document.getElementById('Nacionalidad').value = "España";
-
-      // Nombre a Title Case (si viene en mayúsculas)
-      const nomVal = document.getElementById('Nombre').value;
-      if(nomVal) document.getElementById('Nombre').value = titleCase(nomVal);
 
       // Estado
       const st = [];
@@ -334,6 +328,20 @@
       a.click();
       a.remove();
     });
+    // Pegar del portapapeles → textarea
+document.getElementById('pasteClipboard').addEventListener('click', async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      document.getElementById('ocr').value = text;
+      document.getElementById('status').textContent = "OCR pegado.";
+    } else {
+      alert("No hay texto en el portapapeles o no se concedió permiso.");
+    }
+  } catch (e) {
+    alert("El navegador bloqueó el acceso al portapapeles. Pega manualmente (Ctrl/Cmd + V).");
+  }
+});
   </script>
 </body>
 </html>

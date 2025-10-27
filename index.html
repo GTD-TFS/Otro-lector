@@ -127,36 +127,55 @@ function parseByRules(ocrRaw){
     }
   }
 
-  /* ---- LUGAR DE NACIMIENTO (8ª y 9ª global) ---- */
-  let lugarNac = "";
-  {
-    const l8 = lines[7] || "";
-    const l9 = lines[8] || "";
-    if(l8){
-      lugarNac = l8;
-      if(l9 && ucase(l9) !== ucase(l8)) lugarNac += ", " + l9;
+  /* ---- LUGAR DE NACIMIENTO: prioridad ancla ---- */
+let lugarNac = "";
+{
+  // Prioridad: líneas inmediatamente debajo de la cabecera "LUGAR DE NACIMIENTO"
+  const anchorIdx = U.findIndex(l => /^LUGAR\s+DE\s+NAC(IMIENTO)?$/.test(l));
+  if (anchorIdx >= 0) {
+    const a1 = lines[anchorIdx+1] || "";
+    const a2 = lines[anchorIdx+2] || "";
+    if (a1) {
+      lugarNac = a1;
+      if (a2 && ucase(a2) !== ucase(a1)) lugarNac += ", " + a2;
       lugarNac = tcase(lugarNac);
     }
   }
-
-  /* ---- PADRES (línea 11 global) ---- */
-  let padres = "";
-  {
-    const l11 = lines[10] || "";
-    if(l11){
-      let p = l11.replace(/\s*\/\s*/g, " y ");
-      if(!/ y /i.test(p)){
-        // Si no hay "/", forzamos " y " entre dos partes si es posible
-        const parts = p.split(/\s+/).filter(Boolean);
-        if(parts.length >= 2){
-          p = parts[0] + " y " + parts.slice(1).join(" ");
-        }else{
-          p = p + " y";
-        }
-      }
-      padres = tcase(p.trim());
+  // Fallback: 8ª y 9ª línea global (como tenías)
+  if (!lugarNac) {
+    const l8 = lines[7] || "";
+    const l9 = lines[8] || "";
+    if (l8) {
+      lugarNac = l8;
+      if (l9 && ucase(l9) !== ucase(l8)) lugarNac += ", " + l9;
+      lugarNac = tcase(lugarNac);
     }
   }
+}
+
+ /* ---- PADRES: prioridad ancla "HIJO/A DE" (y derivados) ---- */
+let padres = "";
+{
+  // Prioridad: línea inmediatamente debajo de "HIJO/A DE" (admite variaciones)
+  const anchorIdx = U.findIndex(l =>
+    /^(HIJ[O0]\/?A)\s+DE$/.test(l) || /^PADRES?$/.test(l) || /PROGEN|TUTOR|REPRES/.test(l)
+  );
+  let raw = "";
+  if (anchorIdx >= 0) {
+    raw = lines[anchorIdx+1] || "";
+  } else {
+    // Fallback: línea 11 global (como tenías)
+    raw = lines[10] || "";
+  }
+  if (raw) {
+    let p = raw.replace(/\s*\/\s*/g, " y ");
+    if (!/ y /i.test(p)) {
+      const parts = p.split(/\s+/).filter(Boolean);
+      p = parts.length >= 2 ? parts[0] + " y " + parts.slice(1).join(" ") : p + " y";
+    }
+    padres = tcase(p.trim());
+  }
+}
 
   /* ---- MRZ: intentar detectar las tres últimas líneas con '<' ---- */
   function lastMrzTriplet(ls){

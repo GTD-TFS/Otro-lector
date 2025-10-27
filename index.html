@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>DILIPOL · Filiación · OCR → JSON</title>
+  <title>FILIATRON</title>
   <style>
     :root{
       --bg:#0b1220; --fg:#e6eefc; --accent:#4da3ff;
@@ -107,86 +107,104 @@ function parseByRules(ocrRaw){
   const lines = toLines(ocrRaw);
   const U = lines.map(ucase);
 
- /* ---- DOMICILIO: variantes + fallback primeras líneas ---- */
-let domicilio = "";
-{
-  // Variantes habituales de cabecera y pistas de dirección
-  const isAddrHeader = (s) => /^(DOMICILIO|DIRECCION|DIRECCIÓN|DOM\.|DOMIC)$/.test(s);
-  const looksAddrLine = (s) => /(AVDA|AVENIDA|CALLE|C\.|C\/|CL |PZA|PLAZA|CTRA|CARRE|CARRETERA|URB|VIA)/.test(s);
+  const isCodeToken = s => /^[A-Z0-9]{6,}$/.test((s||"").toUpperCase());
+  const isMrzLike = s => (s||"").includes("<");
+  const nextPlainIndex = (start)=>{
+    for(let i=start;i<lines.length;i++){
+      const up=U[i]||"";
+      const raw=lines[i]||"";
+      if(!raw.trim()) continue;
+      if(isMrzLike(up)) continue;
+      if(up==="EQUIPO") continue;
+      if(isCodeToken(up)) continue;
+      return i;
+    }
+    return -1;
+  };
 
-  // 1) Prioridad: cabecera tipo "DOMICILIO", "DIRECCIÓN", etc.
-  let anchorIdx = U.findIndex(isAddrHeader);
-  if (anchorIdx >= 0) {
-    const l2 = lines[anchorIdx+1] || "";
-    const l3 = lines[anchorIdx+2] || "";
-    domicilio = [l2, l3].filter(Boolean).join(", ");
-    domicilio = tcase(domicilio);
-  }
-
-  // 2) Si no hay cabecera, pero la PRIMERA línea ya parece dirección, usa línea 1 y 2
-  if (!domicilio) {
-    const first = U[0] || "";
-    if (looksAddrLine(first)) {
+  /* ---- DOMICILIO: variantes + fallback primeras líneas (con consumo) ---- */
+  let domicilio = "";
+  let afterDomIdx = 0; // índice desde el que buscar el siguiente campo si no hay anclas
+  {
+    const isAddrHeader = (s) => /^(DOMICILIO|DIRECCION|DIRECCIÓN|DOM\.|DOMIC)$/.test(s);
+    const looksAddrLine = (s) => /(AVDA|AVENIDA|CALLE|C\.|C\/|CL |PZA|PLAZA|CTRA|CARRE|CARRETERA|URB|VIA)/.test(s);
+  
+    let anchorIdx = U.findIndex(isAddrHeader);
+    if (anchorIdx >= 0) {
+      const l2 = lines[anchorIdx+1] || "";
+      const l3 = lines[anchorIdx+2] || "";
+      domicilio = [l2, l3].filter(Boolean).join(", ");
+      domicilio = tcase(domicilio);
+      afterDomIdx = anchorIdx + 3; // pasamos más allá del bloque de domicilio
+    }
+  
+    if (!domicilio) {
+      const first = U[0] || "";
+      if (looksAddrLine(first)) {
+        domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
+        domicilio = tcase(domicilio);
+        afterDomIdx = 2; // hemos consumido dos primeras líneas
+      }
+    }
+  
+    if (!domicilio) {
       domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
       domicilio = tcase(domicilio);
+      afterDomIdx = 2;
     }
   }
 
-  // 3) Fallback final estrictamente a primeras líneas (lo pediste así)
-  if (!domicilio) {
-    domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
-    domicilio = tcase(domicilio);
-  }
-}
-  /* ---- LUGAR DE NACIMIENTO: prioridad ancla ---- */
-let lugarNac = "";
-{
-  // Prioridad: líneas inmediatamente debajo de la cabecera "LUGAR DE NACIMIENTO"
-  const anchorIdx = U.findIndex(l => /^LUGAR\s+DE\s+NAC(IMIENTO)?$/.test(l));
-  if (anchorIdx >= 0) {
-    const a1 = lines[anchorIdx+1] || "";
-    const a2 = lines[anchorIdx+2] || "";
-    if (a1) {
-      lugarNac = a1;
-      if (a2 && ucase(a2) !== ucase(a1)) lugarNac += ", " + a2;
-      lugarNac = tcase(lugarNac);
+  /* ---- LUGAR DE NACIMIENTO: ancla o búsqueda tras domicilio ---- */
+  let lugarNac = "";
+  let afterLugarIdx = afterDomIdx; // se actualizará al finalizar este bloque
+  {
+    const anchorIdx = U.findIndex(l => /^LUGAR\s+DE\s+NAC(IMIENTO)?$/.test(l));
+    if (anchorIdx >= 0) {
+      const a1 = lines[anchorIdx+1] || "";
+      const a2 = lines[anchorIdx+2] || "";
+      if (a1) {
+        lugarNac = a1;
+        if (a2 && ucase(a2) !== ucase(a1)) lugarNac += ", " + a2;
+        lugarNac = tcase(lugarNac);
+        afterLugarIdx = anchorIdx + 3;
+      }
+    }
+    if (!lugarNac) {
+      const i1 = nextPlainIndex(afterDomIdx);
+      if (i1 !== -1) {
+        const l1 = lines[i1] || "";
+        const i2 = nextPlainIndex(i1 + 1);
+        const l2 = (i2 !== -1) ? (lines[i2] || "") : "";
+        lugarNac = l1;
+        if (l2 && ucase(l2) !== ucase(l1)) lugarNac += ", " + l2;
+        lugarNac = tcase(lugarNac);
+        afterLugarIdx = (i2 !== -1) ? (i2 + 1) : (i1 + 1);
+      }
     }
   }
-  // Fallback: 8ª y 9ª línea global (como tenías)
-  if (!lugarNac) {
-    const l8 = lines[7] || "";
-    const l9 = lines[8] || "";
-    if (l8) {
-      lugarNac = l8;
-      if (l9 && ucase(l9) !== ucase(l8)) lugarNac += ", " + l9;
-      lugarNac = tcase(lugarNac);
-    }
-  }
-}
 
- /* ---- PADRES: prioridad ancla "HIJO/A DE" (y derivados) ---- */
-let padres = "";
-{
-  // Prioridad: línea inmediatamente debajo de "HIJO/A DE" (admite variaciones)
-  const anchorIdx = U.findIndex(l =>
-    /^(HIJ[O0]\/?A)\s+DE$/.test(l) || /^PADRES?$/.test(l) || /PROGEN|TUTOR|REPRES/.test(l)
-  );
-  let raw = "";
-  if (anchorIdx >= 0) {
-    raw = lines[anchorIdx+1] || "";
-  } else {
-    // Fallback: línea 11 global (como tenías)
-    raw = lines[10] || "";
-  }
-  if (raw) {
-    let p = raw.replace(/\s*\/\s*/g, " y ");
-    if (!/ y /i.test(p)) {
-      const parts = p.split(/\s+/).filter(Boolean);
-      p = parts.length >= 2 ? parts[0] + " y " + parts.slice(1).join(" ") : p + " y";
+ /* ---- PADRES: ancla o búsqueda tras lugar de nacimiento ---- */
+  let padres = "";
+  {
+    const anchorIdx = U.findIndex(l =>
+      /^(HIJ[O0]\/?A)\s+DE$/.test(l) || /^PADRES?$/.test(l) || /PROGEN|TUTOR|REPRES/.test(l)
+    );
+    let raw = "";
+    if (anchorIdx >= 0) {
+      raw = lines[anchorIdx+1] || "";
+    } else {
+      const i = nextPlainIndex(afterLugarIdx);
+      if (i !== -1) raw = lines[i] || "";
     }
-    padres = tcase(p.trim());
+    if (raw) {
+      let p = raw.replace(/\s*\/\s*/g, " y ");
+      if (!/ y /i.test(p)) {
+        const parts = (raw||"").split(/\s+/).filter(Boolean);
+        p = parts.length >= 2 ? parts[0] + " y " + parts.slice(1).join(" ") : (raw + " y");
+      }
+      padres = tcase(p.trim());
+    }
   }
-}
 
   /* ---- MRZ: intentar detectar las tres últimas líneas con '<' ---- */
   function lastMrzTriplet(ls){

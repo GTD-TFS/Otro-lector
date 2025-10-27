@@ -79,149 +79,180 @@
 </div>
 
 <script>
-/* ================== Reglas y utilidades base (capitalización, limpieza) ================== */
-const clean = s => (s||"").normalize("NFD").replace(/[^\x00-\x7FÀ-ÿ0-9 .,/()\-<]/g,'');
-const collapse = s => (s||"").replace(/\s+/g,' ').trim();
+/* ========= Utilidades básicas ========= */
+const toLines = (txt) => (txt || "")
+  .split(/\r?\n/)
+  .map(s => s.trim())
+  .filter(s => s.length > 0);
+
 const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
+const ucase = s => (s||"").toUpperCase();
 
-/* ================== MRZ ROBUSTO: normalización y extracción estricta ================== */
-function normMRZ(s){
-  return (s||"").toUpperCase()
-    .replace(/[く‹«＜⟨⟪]/g,'<')          // variantes del símbolo '<'
-    .replace(/[^A-Z0-9< \n]/g,' ')       // limpia basura
-    .replace(/\s+/g,' ')
-    .trim();
-}
-// L3 = último APELLIDOS<<NOMBRES
-function mrzL3_strict(ocr){
-  const txt = normMRZ(ocr);
-  const re = /([A-Z]+(?:<[A-Z]+)*)<<([A-Z]+(?:<[A-Z]+)*)(?:<+|$)/g;
-  let m,last=null; while((m=re.exec(txt))!==null){ last=m; }
-  return last ? (last[1]+'<<'+last[2]).replace(/[^A-Z<]/g,'') : "";
-}
-// L1: “8 dígitos + letra” justo antes del primer “<<”
-function mrzL1_strict(ocr){
-  const txt = normMRZ(ocr);
-  const m = txt.match(/([0-9]{8}[A-Z])<</);
-  return m ? (m[1]+'<<') : "";
-}
-// L2: YYMMDD + Sexo + Nacionalidad
-function mrzL2_strict(ocr){
-  const txt = normMRZ(ocr);
-  const m = txt.match(/([0-9]{2})([0-9]{2})([0-9]{2})([MF])[A-Z0-9<]*?([A-Z]{3})/);
-  return m ? {yy:m[1],mm:m[2],dd:m[3],sx:m[4],nat:m[5]} : null;
+/* ========= Lectura de portapapeles ========= */
+async function readFromClipboard(){
+  try{
+    const txt = await navigator.clipboard.readText();
+    return txt || "";
+  }catch{
+    const m = prompt("Pega manualmente el OCR (texto bruto, línea por línea):");
+    return m || "";
+  }
 }
 
-/* ================== Reglas de campos desde MRZ ================== */
-// DNI = exactamente 9 caracteres previos al primer “<<”: 8 dígitos + letra
-function dniFromL1(L1){
-  if(!L1) return "";
-  const j=L1.indexOf("<<"); if(j<9) return "";
-  const cand=L1.slice(j-9,j);
-  return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
+/* ========= Reglas específicas que has pedido =========
+  - DOMICILIO: es la 2ª + 3ª línea a partir de la palabra "DOMICILIO"
+    (contando "DOMICILIO" como 1ª).
+  - LUGAR DE NACIMIENTO: línea 8 global, y la 9 si es distinta.
+  - PADRES: línea 11 global; reemplazar "/" por " y ". Si no hay "/", igualmente poner " y " en medio.
+  - MRZ:
+      * L1: si empieza como IDESP (admitiendo variantes: 1DE5P, IOESP, etc.) → Nacionalidad = "España".
+            Nº de documento = 9 chars inmediatamente a la izquierda del primer "<<<" (8 dígitos + 1 letra). Si no cumple, vacío.
+      * L2: fecha = primeros 6 dígitos (AAMMDD) → DD/MM/AAAA (AA≥30→19AA; AA<30→20AA). Sexo: M/F → MASCULINO/FEMENINO.
+      * L3: tokens por "<" (descarta vacíos):
+            1º = primer apellido, 2º = segundo apellido, 3º = nombre, 4º (si existe) = segundo nombre (se añade al nombre).
+*/
+function parseByRules(ocrRaw){
+  const lines = toLines(ocrRaw);
+  const U = lines.map(ucase);
+
+  /* ---- DOMICILIO ---- */
+  let domicilio = "";
+  {
+    const i = U.indexOf("DOMICILIO");
+    if(i >= 0){
+      const l2 = lines[i+1] || "";
+      const l3 = lines[i+2] || "";
+      domicilio = [l2, l3].filter(Boolean).join(", ");
+      domicilio = tcase(domicilio);
+    }
+  }
+
+  /* ---- LUGAR DE NACIMIENTO (8ª y 9ª global) ---- */
+  let lugarNac = "";
+  {
+    const l8 = lines[7] || "";
+    const l9 = lines[8] || "";
+    if(l8){
+      lugarNac = l8;
+      if(l9 && ucase(l9) !== ucase(l8)) lugarNac += ", " + l9;
+      lugarNac = tcase(lugarNac);
+    }
+  }
+
+  /* ---- PADRES (línea 11 global) ---- */
+  let padres = "";
+  {
+    const l11 = lines[10] || "";
+    if(l11){
+      let p = l11.replace(/\s*\/\s*/g, " y ");
+      if(!/ y /i.test(p)){
+        // Si no hay "/", forzamos " y " entre dos partes si es posible
+        const parts = p.split(/\s+/).filter(Boolean);
+        if(parts.length >= 2){
+          p = parts[0] + " y " + parts.slice(1).join(" ");
+        }else{
+          p = p + " y";
+        }
+      }
+      padres = tcase(p.trim());
+    }
+  }
+
+  /* ---- MRZ: intentar detectar las tres últimas líneas con '<' ---- */
+  function lastMrzTriplet(ls){
+    const withAngles = ls.filter(s => s.includes("<"));
+    if(withAngles.length >= 3){
+      return withAngles.slice(-3);
+    }
+    // fallback: tomar literalmente las últimas 3 líneas
+    return ls.slice(-3);
+  }
+  const [MRZ_L1_raw, MRZ_L2_raw, MRZ_L3_raw] = lastMrzTriplet(lines);
+  const MRZ_L1 = (MRZ_L1_raw || "").toUpperCase().replace(/\s+/g,"");
+  const MRZ_L2 = (MRZ_L2_raw || "").toUpperCase().replace(/\s+/g,"");
+  const MRZ_L3 = (MRZ_L3_raw || "").toUpperCase().replace(/\s+/g,"");
+
+  /* ---- Nacionalidad desde L1 (variantes IDESP) ---- */
+  function isSpainFromL1(l1){
+    // Normalizamos confusiones comunes: 1→I, l→I, 5→S, 0/O→O, B no afecta, D/O ambiguo
+    const norm = l1
+      .replace(/[1lİＩ]/g,'I')
+      .replace(/[5Ｓ]/g,'S')
+      .replace(/[0Ｏ]/g,'O');
+    // Aceptar I(D|O)ESP al inicio
+    return /^I[DO]ESP/.test(norm);
+  }
+  let Nacionalidad = "";
+  if (MRZ_L1 && isSpainFromL1(MRZ_L1)) {
+    Nacionalidad = "España";
+  }
+
+  /* ---- Nº de documento desde L1: 9 previos al primer "<<<" ---- */
+  function docFromL1(l1){
+    const m = l1.match(/<{3,}/);
+    if(!m) return "";
+    const idx = m.index;
+    if(idx < 9) return "";
+    const cand = l1.slice(idx-9, idx);
+    return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
+  }
+  const numDoc = MRZ_L1 ? docFromL1(MRZ_L1) : "";
+
+ /* ---- Fecha, Sexo y Nacionalidad desde L2 ---- */
+let fechaNac = "";
+let sexo = "";
+{
+  // L2 típico: YY MM DD (check) SEX EXPYY EXPMM EXPDD (check) NAT...
+  // Ej.: 8001014F2501017ESP<<<<<<<<<<<7
+  const m = MRZ_L2.match(
+    /^(\d{2})(\d{2})(\d{2})\d([MF])(\d{2})(\d{2})(\d{2})\d([A-Z]{3})/
+  );
+  if (m) {
+    const yy = parseInt(m[1], 10), mm = m[2], dd = m[3];
+    const year = yy >= 30 ? 1900 + yy : 2000 + yy;
+    fechaNac = `${dd}/${mm}/${year}`;
+    sexo = m[4] === "F" ? "FEMENINO" : "MASCULINO";
+
+    // Nacionalidad desde L2 si aún no la tenemos
+    const nat3 = m[8];
+    if (!Nacionalidad) {
+      Nacionalidad = nat3 === "ESP" ? "España" : nat3;
+    }
+  }
 }
-// Nombres/Apellidos desde L3. No filtrar apellidos duplicados válidos.
-function namesFromL3(L3){
-  if(!L3 || !L3.includes("<<")) return {nombre:"",apellidos:""};
-  const i=L3.lastIndexOf("<<");
-  let aps=L3.slice(0,i).replace(/<+/g,' ');
-  let nom=L3.slice(i+2).replace(/<+/g,' ');
-  // saneado
-  aps = aps.replace(/[^A-Z ]+/g,' ').replace(/\s+/g,' ').trim();  // MAYÚSCULAS
-  nom = nom.replace(/[^A-Z ]+/g,' ').replace(/\s+/g,' ').trim();  // TitleCase
-  // evitar falsos apellidos como ESP / IDESP
-  if(/^ESP(\s|$)/.test(aps) || /^IDESP/.test(aps)) aps="";
-  // nombre no debe contener números ni tokens MRZ
-  if(/\d/.test(nom) || /ESP/.test(nom)) nom="";
-  return {nombre:tcase(nom), apellidos:aps.toUpperCase()};
-}
-// Fecha, sexo, nacionalidad desde L2. Siglo: aa>=30→19aa, aa<30→20aa
-function dsFromL2(L2){
-  if(!L2) return {fecha:"",sexo:"",nac:""};
-  const yy=+L2.yy, mm=L2.mm, dd=L2.dd;
-  const year = yy>=30 ? 1900+yy : 2000+yy;
+
+  /* ---- Nombres y apellidos desde L3 ---- */
+  let nombre = "", apellidos = "";
+  if(MRZ_L3){
+    const parts = MRZ_L3.split("<").filter(Boolean);
+    const ap1 = parts[0] || "";
+    const ap2 = parts[1] || "";
+    const nom1 = parts[2] || "";
+    const nom2 = parts[3] || "";
+    apellidos = [ap1, ap2].filter(Boolean).join(" ").trim();
+    nombre = [nom1, nom2].filter(Boolean).join(" ").trim();
+    apellidos = apellidos.toUpperCase();
+    nombre = tcase(nombre);
+  }
+
+  /* ---- Tipo de documento (reverso DNI) ---- */
+  let tipo = "DNI";
+
   return {
-    fecha: `${dd}/${mm}/${year}`,
-    sexo: L2.sx==="F" ? "FEMENINO" : "MASCULINO",
-    nac:  L2.nat==="ESP" ? "España" : L2.nat
+    Nombre: nombre,
+    Apellidos: apellidos,
+    "Tipo de documento": tipo,
+    "Nº Documento": numDoc,
+    Sexo: sexo,
+    Nacionalidad: Nacionalidad,
+    "Nombre de los Padres": padres,
+    "Fecha de nacimiento": fechaNac,
+    "Lugar de nacimiento": lugarNac,
+    Domicilio: domicilio
   };
 }
 
-/* ================== Encabezados tolerantes (excesivos) ================== */
-const HEAD = {
-  domicilio: /(DOMI|COMI|D0MI|DOMIL|DOMIC|DIREC|CALLE|CL |AVDA|AVENID|VIA|URB|URBAN|CTRA|CARRE|CARRET|PZA|PLAZA|PORTAL|BLOQ|ESC|PLANTA|PISO|KM )/,
-  nacimiento: /(L[UI]G[AO]R|LAGAR|LIGAR|LUGAR|LOCALID|CIUDAD|POBLAC|PROVIN).*(NAC|NACIM|NADIM)|LUGAR DE NAC|NACIMIENTO|LUGOR|LIGAR DE NAC/,
-  padres: /(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)/
-};
-const isCodeToken = l => /^[A-Z0-9]{6,}$/.test((l||"").toUpperCase());
-const looksAddr = l => /(AVDA|C\.|CALLE|PZA|PLAZA|CTRA|CARRE|URB|VIA)/.test((l||"").toUpperCase()) || /\b[0-9]{1,4}[A-Z]?\b/.test(l||"");
-const isMRZLike = l => /<{2,}/.test((l||"").toUpperCase());
-
-function domicilioFromOCR(ocr){
-  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-  const U=lines.map(s=>s.toUpperCase());
-  let idx = U.findIndex(l=>HEAD.domicilio.test(l));
-  if(idx<0){
-    const cand=lines.filter((l,i)=>looksAddr(U[i]));
-    return cand.length ? tcase(collapse([...new Set(cand)].join(', '))) : "";
-  }
-  const out=[];
-  for(let k=idx+1;k<lines.length;k++){
-    const up=U[k];
-    if(/EQUIPO/.test(up) || isMRZLike(up)) break;
-    if(isCodeToken(up)) continue;
-    if(!lines[k].trim()) continue;
-    out.push(lines[k]); if(out.length>=4) break;
-  }
-  if(!out.length) return "";
-  return tcase(collapse([...new Set(out.map(collapse))].join(', ')));
-}
-function lugarFromOCR(ocr){
-  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-  const U=lines.map(s=>s.toUpperCase());
-  const idx=U.findIndex(l=>HEAD.nacimiento.test(l));
-  if(idx<0) return "";
-  const take=[];
-  for(let k=idx+1;k<lines.length;k++){
-    const up=U[k];
-    if(HEAD.domicilio.test(up) || /EQUIPO/.test(up) || isMRZLike(up)) break;
-    if(isCodeToken(up)) continue;
-    if(!lines[k].trim()) continue;
-    take.push(lines[k]); if(take.length>=3) break;
-  }
-  if(!take.length) return "";
-  return tcase(collapse([...new Set(take.map(collapse))].join(', ')));
-}
-function padresFromOCR(ocr){
-  const lines=clean(ocr).split('\n').map(s=>s.trim()).filter(Boolean);
-  const U=lines.map(s=>s.toUpperCase());
-  const i=U.findIndex(l=>HEAD.padres.test(l));
-  if(i<0) return "";
-  const names=[];
-  const inline=lines[i].replace(/.*?(HIJ[O0]\/?A DE|H[I1]J[O0]\/?A DE|HIO\/?A DE|MADRE|PADRE|PROGEN|TUTOR|REPRES|PADRES)\s*/i,'').trim();
-  if(inline) names.push(inline);
-  for(let k=i+1;k<i+3 && k<lines.length;k++){
-    const up=U[k];
-    if(HEAD.domicilio.test(up)||HEAD.nacimiento.test(up)||/EQUIPO/.test(up)||isMRZLike(up)||isCodeToken(up)) break;
-    names.push(lines[k]);
-  }
-  const parts = collapse(names.join(' / ')).split(/[\/,;]+/).map(s=>collapse(s)).filter(Boolean).map(tcase);
-  if(!parts.length) return "";
-  if(parts.length===1) return parts[0]+" y";          // si solo hay uno
-  return `${parts[0]} y ${parts[1]}`;
-}
-
-/* ================== Detección de TIPO si no hay DNI ================== */
-function detectTipoFallback(ocr){
-  const txt = normMRZ(ocr);
-  // NIE: letra inicial X/Y/Z + 7 dígitos + letra
-  if(/[XYZ][0-9]{7}[A-Z]/.test(txt)) return "NIE";
-  // PASAPORTE: línea que empiece con P<
-  if(/\bP</.test(txt)) return "PASAPORTE";
-  return "";
-}
-
-/* ================== Validación visual ================== */
+/* ========= Validación visual / filename ========= */
 function validateAll(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
@@ -236,71 +267,31 @@ function updateFilename(){
   document.getElementById('fname').textContent = ap + ".json";
 }
 
-/* ================== Núcleo: leer portapapeles → analizar → rellenar ================== */
-async function readFromClipboard(){
-  try{
-    const txt = await navigator.clipboard.readText();
-    return txt || "";
-  }catch{
-    const m = prompt("Pega manualmente el OCR:");
-    return m || "";
-  }
-}
-function processOCR(ocr){
-  if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
-
-  // MRZ
-  const L3 = mrzL3_strict(ocr);
-  const L1 = mrzL1_strict(ocr);
-  const L2 = mrzL2_strict(ocr);
-
-  // Nombre / Apellidos (no eliminar duplicados)
-  const np = namesFromL3(L3);
-  if(np.apellidos) document.getElementById('Apellidos').value = np.apellidos;
-  if(np.nombre)    document.getElementById('Nombre').value    = np.nombre;
-
-  // DNI exacto (9 previos al primer <<)
-  const dni = dniFromL1(L1);
-  if(dni){
-    document.getElementById('Numero').value = dni;
-    document.getElementById('Tipo').value   = "DNI";
-  }
-
-  // Si no hay DNI, intenta NIE o PASAPORTE
-  if(!document.getElementById('Tipo').value){
-    const t = detectTipoFallback(ocr);
-    if(t) document.getElementById('Tipo').value = t;
-  }
-
-  // Fecha / Sexo / Nacionalidad
-  const ds = dsFromL2(L2);
-  if(ds.fecha) document.getElementById('Nacimiento').value = ds.fecha;
-  if(ds.sexo)  document.getElementById('Sexo').value = ds.sexo;
-  if(ds.nac)   document.getElementById('Nacionalidad').value = ds.nac;
-
-  // Lugar de nacimiento (encabezados tolerantes)
-  if(!document.getElementById('Lugar').value){
-    const ln = lugarFromOCR(ocr);
-    if(ln) document.getElementById('Lugar').value = ln;
-  }
-
-  // Domicilio (admite 1 sola línea)
-  if(!document.getElementById('Domicilio').value){
-    const dm = domicilioFromOCR(ocr);
-    if(dm) document.getElementById('Domicilio').value = dm;
-  }
-
-  // Padres “Nombre1 y Nombre2”
-  if(!document.getElementById('Padres').value || / y$/.test((document.getElementById('Padres').value||"").trim())){
-    const pf = padresFromOCR(ocr);
-    if(pf) document.getElementById('Padres').value = pf;
-  }
+/* ========= Núcleo: leer → aplicar reglas → rellenar ========= */
+function fillFormFromParsed(p){
+  if(p.Nombre)  document.getElementById('Nombre').value = p.Nombre;
+  if(p.Apellidos) document.getElementById('Apellidos').value = p.Apellidos;
+  if(p["Tipo de documento"]) document.getElementById('Tipo').value = p["Tipo de documento"];
+  if(p["Nº Documento"]) document.getElementById('Numero').value = p["Nº Documento"];
+  if(p.Sexo) document.getElementById('Sexo').value = p.Sexo;
+  if(p.Nacionalidad) document.getElementById('Nacionalidad').value = p.Nacionalidad;
+  if(p["Nombre de los Padres"]) document.getElementById('Padres').value = p["Nombre de los Padres"];
+  if(p["Fecha de nacimiento"]) document.getElementById('Nacimiento').value = p["Fecha de nacimiento"];
+  if(p["Lugar de nacimiento"]) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
+  if(p.Domicilio) document.getElementById('Domicilio').value = p.Domicilio;
 
   updateFilename();
   validateAll();
 }
 
-/* ================== Botones ================== */
+function processOCR(ocr){
+  if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
+  // Aplicar exactamente tus reglas al OCR bruto
+  const parsed = parseByRules(ocr);
+  fillFormFromParsed(parsed);
+}
+
+/* ========= Botones ========= */
 document.getElementById('readAnalyze').addEventListener('click', async ()=>{
   const ocr = await readFromClipboard();
   processOCR(ocr);
@@ -312,7 +303,7 @@ document.getElementById('clear').addEventListener('click', ()=>{
 });
 document.getElementById('Apellidos').addEventListener('input', updateFilename);
 
-/* ================== Descargar JSON ================== */
+/* ========= Descargar JSON ========= */
 document.getElementById('download').addEventListener('click', ()=>{
   if(!document.getElementById('Condicion').value){
     alert("Condición obligatoria");
@@ -339,7 +330,7 @@ document.getElementById('download').addEventListener('click', ()=>{
   a.download=fname; a.click();
 });
 
-/* ================== Estado inicial ================== */
+/* ========= Estado inicial ========= */
 updateFilename();
 validateAll();
 </script>

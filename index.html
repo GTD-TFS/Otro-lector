@@ -36,7 +36,7 @@
   </style>
 </head>
 <body>
-<h1>DILIPOL · Filiación · OCR → JSON</h1>
+<h1>FILIATRON</h1>
 
 <div class="grid two">
  <!-- ACCIONES -->
@@ -55,14 +55,14 @@
     <div class="fields">
       <div><label>Nombre</label><input id="Nombre"></div>
       <div><label>Apellidos (MAYÚSCULAS)</label><input id="Apellidos"></div>
-      <div><label>Tipo de documento</label><input id="Tipo" placeholder="DNI / NIE / PASAPORTE"></div>
+      <div><label>Tipo de documento</label><input id="Tipo"></div>
       <div><label>Nº documento</label><input id="Numero"></div>
       <div><label>Sexo</label>
         <select id="Sexo"><option></option><option>MASCULINO</option><option>FEMENINO</option></select>
       </div>
-      <div><label>Nacionalidad</label><input id="Nacionalidad" placeholder="España / ESP / ..."></div>
-      <div class="span2"><label>Nombre de los Padres (Nombre1 y Nombre2)</label><input id="Padres" placeholder="Juan y Victoria"></div>
-      <div><label>Fecha de nacimiento</label><input id="Nacimiento" placeholder="dd/mm/aaaa"></div>
+      <div><label>Nacionalidad</label><input id="Nacionalidad"></div>
+      <div class="span2"><label>Nombre de los Padres</label><input id="Padres"></div>
+      <div><label>Fecha de nacimiento</label><input id="Nacimiento"></div>
       <div><label>Lugar de nacimiento</label><input id="Lugar"></div>
       <div class="span2"><label>Domicilio</label><input id="Domicilio"></div>
       <div><label>Teléfono</label><input id="Telefono" inputmode="numeric" pattern="[0-9 ]*"></div>
@@ -202,7 +202,7 @@ function parseByRules(ocrRaw){
         const parts = (raw||"").split(/\s+/).filter(Boolean);
         p = parts.length >= 2 ? parts[0] + " y " + parts.slice(1).join(" ") : (raw + " y");
       }
-      padres = tcase(p.trim());
+      padres = tcase(p.trim()).replace(/\sY\s/g, " y ");
     }
   }
 

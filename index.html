@@ -72,9 +72,11 @@
       </div>
     </div>
     <div class="row">
-      <button class="btn" id="download">Descargar JSON</button>
-      <span>→ <span class="mono" id="fname">APELLIDOS.json</span></span>
-    </div>
+  <button class="btn" id="download">Descargar JSON</button>
+  <button class="btn" id="openIA" style="display:flex;gap:6px;align-items:center;">
+    📷 Foto IA
+  </button>
+</div>
   </div>
 </div>
 
@@ -348,7 +350,11 @@ document.getElementById('download').addEventListener('click', ()=>{
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
   a.download=fname; a.click();
 });
-
+/* ========= Foto IA en pestaña nueva ========= */
+document.getElementById("openIA").addEventListener("click", ()=>{
+  const url = "https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-filiaciones-ocr-docu";
+  window.open(url, "_blank", "noopener");
+});
 /* ========= Estado inicial ========= */
 updateFilename();
 validateAll();

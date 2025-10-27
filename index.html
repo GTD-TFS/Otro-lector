@@ -39,15 +39,17 @@
 <h1>DILIPOL · Filiación · OCR → JSON</h1>
 
 <div class="grid two">
-  <!-- ACCIONES -->
-  <div class="card">
-    <div class="row">
-      <button class="btn" id="readAnalyze">Pegar del portapapeles y analizar</button>
-      <button class="btn secondary" id="clear">Limpiar</button>
-    </div>
-    <div class="row hint">No se muestra el OCR. Se lee del portapapeles, se analiza y se rellenan los campos.</div>
+ <!-- ACCIONES -->
+<div class="card">
+  <div class="row">
+    <button class="btn" onclick="window.open('https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-filiaciones-ocr-documentos','_blank','noopener')">
+      📷 Foto IA
+    </button>
+    <button class="btn" id="readAnalyze">Integrar</button>
+    <button class="btn secondary" id="clear" title="Limpiar">🧹</button>
   </div>
-
+  <div class="row hint">No se muestra el OCR. Se lee del portapapeles, se analiza y se rellenan los campos.</div>
+</div>
   <!-- CAMPOS -->
   <div class="card">
     <div class="fields">
@@ -101,34 +103,41 @@ async function readFromClipboard(){
   }
 }
 
-/* ========= Reglas específicas que has pedido =========
-  - DOMICILIO: es la 2ª + 3ª línea a partir de la palabra "DOMICILIO"
-    (contando "DOMICILIO" como 1ª).
-  - LUGAR DE NACIMIENTO: línea 8 global, y la 9 si es distinta.
-  - PADRES: línea 11 global; reemplazar "/" por " y ". Si no hay "/", igualmente poner " y " en medio.
-  - MRZ:
-      * L1: si empieza como IDESP (admitiendo variantes: 1DE5P, IOESP, etc.) → Nacionalidad = "España".
-            Nº de documento = 9 chars inmediatamente a la izquierda del primer "<<<" (8 dígitos + 1 letra). Si no cumple, vacío.
-      * L2: fecha = primeros 6 dígitos (AAMMDD) → DD/MM/AAAA (AA≥30→19AA; AA<30→20AA). Sexo: M/F → MASCULINO/FEMENINO.
-      * L3: tokens por "<" (descarta vacíos):
-            1º = primer apellido, 2º = segundo apellido, 3º = nombre, 4º (si existe) = segundo nombre (se añade al nombre).
-*/
 function parseByRules(ocrRaw){
   const lines = toLines(ocrRaw);
   const U = lines.map(ucase);
 
-  /* ---- DOMICILIO ---- */
-  let domicilio = "";
-  {
-    const i = U.indexOf("DOMICILIO");
-    if(i >= 0){
-      const l2 = lines[i+1] || "";
-      const l3 = lines[i+2] || "";
-      domicilio = [l2, l3].filter(Boolean).join(", ");
+ /* ---- DOMICILIO: variantes + fallback primeras líneas ---- */
+let domicilio = "";
+{
+  // Variantes habituales de cabecera y pistas de dirección
+  const isAddrHeader = (s) => /^(DOMICILIO|DIRECCION|DIRECCIÓN|DOM\.|DOMIC)$/.test(s);
+  const looksAddrLine = (s) => /(AVDA|AVENIDA|CALLE|C\.|C\/|CL |PZA|PLAZA|CTRA|CARRE|CARRETERA|URB|VIA)/.test(s);
+
+  // 1) Prioridad: cabecera tipo "DOMICILIO", "DIRECCIÓN", etc.
+  let anchorIdx = U.findIndex(isAddrHeader);
+  if (anchorIdx >= 0) {
+    const l2 = lines[anchorIdx+1] || "";
+    const l3 = lines[anchorIdx+2] || "";
+    domicilio = [l2, l3].filter(Boolean).join(", ");
+    domicilio = tcase(domicilio);
+  }
+
+  // 2) Si no hay cabecera, pero la PRIMERA línea ya parece dirección, usa línea 1 y 2
+  if (!domicilio) {
+    const first = U[0] || "";
+    if (looksAddrLine(first)) {
+      domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
       domicilio = tcase(domicilio);
     }
   }
 
+  // 3) Fallback final estrictamente a primeras líneas (lo pediste así)
+  if (!domicilio) {
+    domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
+    domicilio = tcase(domicilio);
+  }
+}
   /* ---- LUGAR DE NACIMIENTO: prioridad ancla ---- */
 let lugarNac = "";
 {

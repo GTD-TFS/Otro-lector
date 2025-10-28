@@ -83,6 +83,8 @@ const toLines = (txt) => (txt || "")
 
 const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
 const ucase = s => (s||"").toUpperCase();
+const normalize = s => (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+const noSpace = s => normalize(s).replace(/\s+/g,'');
 
 async function readFromClipboard(){
   try{
@@ -95,120 +97,103 @@ async function readFromClipboard(){
 }
 
 function parseByRules(ocrRaw){
-  const lines = toLines(ocrRaw);
-  const U = lines.map(s => (s||"")
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-  );
+  // 1) Normalización para detección: mayúsculas sin tildes + SIN ESPACIOS (NS)
+  const raw = ocrRaw || "";
+  const lines = toLines(raw);
+  const U = lines.map(normalize);
+  const NS = noSpace(raw);
 
-  // SOLO estos tres encabezados, con tolerancia de OCR:
-  const RX_DOM  = /^\s*D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q][\s:.-]*$/;                   // DOMICILIO
-  const RX_LNAC = /^\s*L[UÜV][G6][A4]R\s*D[EE]?\s*N[ A]*A?C[IM1][IM1][E3][MN][T7][O0][\s:.-]*$/; // LUGAR DE NACIMIENTO
-  const RX_HIJO = /^\s*H[IJ1][J1][OA0](?:\/[A@])?\s*D[EE][\s:.-]*$/;                   // HIJO/A DE
+  // Encabezados (OCR-tolerantes) SIN ESPACIOS para detección de rangos
+  const RX_DOM_NS  = /D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q]/; // DOMICILIO roto
+  const RX_LNAC_NS = /L[UÜV][G6][A4]RDE?N[ A]*A?C[IM1][IM1][E3][MN][T7][O0]/; // LUGARDE/NACIMIENTO
+  const RX_HIJO_NS = /H[IJ1][J1][OA0](?:\/[A@])?DE/; // HIJO(A)DE
+  const RX_IDESP   = /I[DO]ESP/;
 
-  const isCodeToken = s => /^[A-Z0-9]{6,}$/.test((s||"").toUpperCase());
-  const isMrzLike   = s => (s||"").includes("<");
-  const nextPlainIndex = (start)=>{
-    for(let i=start;i<lines.length;i++){
-      const up=U[i]||"", raw=lines[i]||"";
-      if(!raw.trim()) continue;
-      if(isMrzLike(up)) continue;
-      if (up === "EQUIPO") {
-        // Saltar "EQUIPO" y, si la siguiente línea parece numérica/código, saltarla también
-        const nxtU = U[i+1] || "";
-        const nxtRaw = lines[i+1] || "";
-        const looksNumericOrCode = /[0-9]/.test(nxtRaw) || /^[A-Z0-9]{4,}$/.test(nxtU);
-        if (looksNumericOrCode) { i++; }
-        continue;
-      }
-      if(isCodeToken(up)) continue;
-      return i;
+  // Índices de encabezados por línea (comparando cada línea sin espacios)
+  const findHeaderLine = (rxNS) => {
+    for (let i=0;i<U.length;i++){
+      if (rxNS.test(noSpace(U[i]))) return i;
     }
     return -1;
   };
 
-  // DOMICILIO
+  const idxDOM  = findHeaderLine(RX_DOM_NS);
+  const idxLUG  = findHeaderLine(RX_LNAC_NS);
+  const idxHIJO = findHeaderLine(RX_HIJO_NS);
+  const idxEQUIPO = U.findIndex(s => s.trim() === 'EQUIPO');
+
+  // 2) DOMICILIO por rango: desde DOM hasta LUGAR o EQUIPO
   let domicilio = "";
-  let afterDomIdx = 0;
-  {
-    const isAddrHeader = (s) => RX_DOM.test(s);
-    const looksAddrLine = (s) => /(AVDA|AVENIDA|CALLE|C\.|C\/|CL |PZA|PLAZA|CTRA|CARRE|CARRETERA|URB|VIA)/.test(s);
-
-    let anchorIdx = U.findIndex(isAddrHeader);
-    if (anchorIdx >= 0) {
-      const l2 = lines[anchorIdx+1] || "";
-      const l3 = lines[anchorIdx+2] || "";
-      domicilio = [l2, l3].filter(Boolean).join(", ");
-      domicilio = tcase(domicilio);
-      afterDomIdx = anchorIdx + 3;
-    }
-    if (!domicilio) {
-      const first = U[0] || "";
-      if (looksAddrLine(first)) {
-        domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
-        domicilio = tcase(domicilio);
-        afterDomIdx = 2;
+  if (idxDOM !== -1){
+    const end = [idxLUG, idxEQUIPO].filter(i=>i>-1).sort((a,b)=>a-b)[0];
+    const stop = (end !== undefined) ? end : lines.length;
+    // unir todas las líneas intermedias, cortando si aparece EQUIPO y su línea numérica debajo
+    let parts = [];
+    for (let i=idxDOM+1; i<stop; i++){
+      const up = U[i];
+      if (up === 'EQUIPO'){
+        // si la siguiente línea es numérica/código, saltarla también y cortar domicilio
+        const nxt = lines[i+1] || "";
+        const nxtU = U[i+1] || "";
+        const looksNumCode = /[0-9]/.test(nxt) || /^[A-Z0-9]{4,}$/.test(nxtU);
+        if (looksNumCode) i++;
+        break;
       }
+      parts.push(lines[i]);
     }
-    if (!domicilio) {
-      domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
-      domicilio = tcase(domicilio);
-      afterDomIdx = 2;
+    domicilio = parts.join(", ").trim();
+  } else {
+    // Sin encabezado DOMICILIO: heurística de calle y cortar donde empiece LUGAR o HIJO
+    const looksAddr = s => /^(C\.|C\/|CALLE|AV(DA)?|AVENIDA|CTRA|CARRETERA|PLAZA|PZA|PASEO|PSO|CAMINO|CMNO|URB|VIA)\b/i.test(s||"");
+    const start = lines.findIndex(looksAddr);
+    if (start !== -1){
+      const stop = [idxLUG, idxHIJO, idxEQUIPO].filter(i=>i>-1).sort((a,b)=>a-b)[0];
+      let parts = [];
+      for (let i=start; i<(stop ?? lines.length); i++){
+        if (U[i] === 'EQUIPO'){
+          const nxt = lines[i+1] || "";
+          const nxtU = U[i+1] || "";
+          const looksNumCode = /[0-9]/.test(nxt) || /^[A-Z0-9]{4,}$/.test(nxtU);
+          if (looksNumCode) i++;
+          break;
+        }
+        parts.push(lines[i]);
+      }
+      domicilio = parts.join(", ").trim();
     }
   }
 
-  // LUGAR DE NACIMIENTO
+  // 3) LUGAR DE NACIMIENTO: desde LUGAR hasta HIJO
   let lugarNac = "";
-  let afterLugarIdx = afterDomIdx;
-  {
-    const anchorIdx = U.findIndex(l => RX_LNAC.test(l));
-    if (anchorIdx >= 0) {
-      const a1 = lines[anchorIdx+1] || "";
-      const a2 = lines[anchorIdx+2] || "";
-      if (a1) {
-        lugarNac = a1;
-        if (a2 && ucase(a2) !== ucase(a1)) lugarNac += ", " + a2;
-        lugarNac = tcase(lugarNac);
-        afterLugarIdx = anchorIdx + 3;
-      }
+  if (idxLUG !== -1){
+    const stop = (idxHIJO !== -1) ? idxHIJO : lines.length;
+    const parts = [];
+    for (let i=idxLUG+1; i<stop; i++){
+      parts.push(lines[i]);
     }
-    if (!lugarNac) {
-      const i1 = nextPlainIndex(afterDomIdx);
-      if (i1 !== -1) {
-        const l1 = lines[i1] || "";
-        const i2 = nextPlainIndex(i1 + 1);
-        const l2 = (i2 !== -1) ? (lines[i2] || "") : "";
-        lugarNac = l1;
-        if (l2 && ucase(l2) !== ucase(l1)) lugarNac += ", " + l2;
-        lugarNac = tcase(lugarNac);
-        afterLugarIdx = (i2 !== -1) ? (i2 + 1) : (i1 + 1);
-      }
-    }
+    lugarNac = parts.join(", ").trim();
   }
 
-  // PADRES
+  // 4) PADRES: desde HIJO/A DE hasta la primera línea que empiece por IDESP/IOESP
+  let idxMRZ_L1_line = -1;
+  for(let i=0;i<U.length;i++){
+    if (/^I[DO]ESP/.test(U[i].replace(/\s+/g,''))) { idxMRZ_L1_line = i; break; }
+  }
   let padres = "";
-  {
-    const anchorIdx = U.findIndex(l => RX_HIJO.test(l));
-    let raw = "";
-    if (anchorIdx >= 0) {
-      raw = lines[anchorIdx+1] || "";
-    } else {
-      const i = nextPlainIndex(afterLugarIdx);
-      if (i !== -1) raw = lines[i] || "";
+  if (idxHIJO !== -1){
+    const stop = (idxMRZ_L1_line !== -1) ? idxMRZ_L1_line : lines.length;
+    const parts = [];
+    for (let i=idxHIJO+1; i<stop; i++){
+      parts.push(lines[i]);
     }
-    if (raw) {
-      let p = raw.replace(/\s*\/\s*/g, " y ");
-      if (!/ y /i.test(p)) {
-        const parts = (raw||"").split(/\s+/).filter(Boolean);
-        p = parts.length >= 2 ? parts[0] + " y " + parts.slice(1).join(" ") : (raw + " y");
-      }
-      padres = tcase(p.trim()).replace(/\sY\s/g, " y ");
+    padres = parts.join(" ").replace(/\s*\/\s*/g," y ").trim();
+    if (!/ y /i.test(padres)) {
+      const arr = padres.split(/\s+/).filter(Boolean);
+      padres = arr.length>=2 ? (arr[0] + " y " + arr.slice(1).join(" ")) : padres;
     }
   }
 
-  // MRZ detección con separadores de '<'
+  // 5) MRZ: soportar separadores con '<<<<<<'
   function detectMRZ(upperLines){
     const isSeparator = (s)=> /^([<\s]){3,}$/.test((s||""));
     const clean = (s)=> (s||"").replace(/\s+/g,'').toUpperCase();
@@ -237,14 +222,16 @@ function parseByRules(ocrRaw){
   }
   const [MRZ_L1, MRZ_L2, MRZ_L3] = detectMRZ(U);
 
+  // 6) Nacionalidad
   function isSpainFromL1(l1){
     const norm = l1.replace(/[1lİＩ]/g,'I').replace(/[5Ｓ]/g,'S').replace(/[0Ｏ]/g,'O');
     return /^I[DO]ESP/.test(norm);
   }
   let Nacionalidad = "";
   if (MRZ_L1 && isSpainFromL1(MRZ_L1)) Nacionalidad = "España";
+  if (!Nacionalidad && MRZ_L2 && MRZ_L2.includes("ESP")) Nacionalidad = "España";
 
-  // Nº documento desde L1 (9 previos a <<<) o corte de línea
+  // 7) Nº documento: 9 previos a '<' con fallback 8 dígitos + 1 letra en L1 si quedó vacío
   function docFromL1(l1, l2){
     const m = l1.match(/<{3,}/);
     if (m){
@@ -258,12 +245,12 @@ function parseByRules(ocrRaw){
     return "";
   }
   let numDoc = MRZ_L1 ? docFromL1(MRZ_L1, MRZ_L2) : "";
-  if (!numDoc && MRZ_L1){ // fallback 8 dígitos + 1 letra en L1
+  if (!numDoc && MRZ_L1){
     const mAlt = MRZ_L1.match(/([0-9]{8}[A-Z])/);
     if (mAlt) numDoc = mAlt[1].toUpperCase();
   }
 
-  // Fecha/Sexo/Nacionalidad desde L2
+  // 8) Fecha (YYMMDD -> dd/mm/aaaa) y 9) Sexo desde L2
   let fechaNac = "", sexo = "";
   {
     const mapDigit = (ch)=>{
@@ -276,7 +263,7 @@ function parseByRules(ocrRaw){
       if (t==='B') return '8';
       return '0';
     };
-    const m = MRZ_L2.match(/^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
+    const m = MRZ_L2 ? MRZ_L2.match(/^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/) : null;
     if (m) {
       const yy = parseInt(mapDigit(m[1][0]) + mapDigit(m[1][1]),10);
       const mm = mapDigit(m[2][0]) + mapDigit(m[2][1]);
@@ -285,16 +272,9 @@ function parseByRules(ocrRaw){
       fechaNac = `${dd}/${mm}/${year}`;
       sexo = m[4] === "F" ? "FEMENINO" : "MASCULINO";
     }
-    if (!Nacionalidad) {
-      if (MRZ_L1 && isSpainFromL1(MRZ_L1)) {
-        Nacionalidad = "España";
-      } else if (MRZ_L2.includes("ESP")) {
-        Nacionalidad = "España";
-      }
-    }
   }
 
-  // Nombres/apellidos desde L3
+  // 10) Apellidos y Nombres desde L3 tras sexo
   let nombre = "", apellidos = "";
   if(MRZ_L3){
     const parts = MRZ_L3.split("<").filter(Boolean);
@@ -304,10 +284,11 @@ function parseByRules(ocrRaw){
     nombre = tcase([nom1, nom2].filter(Boolean).join(" ").trim());
   }
 
-  // Tipo documento
+  // Tipo documento (por defecto)
   let tipo = "DNI";
 
-  // Sanitización final: eliminar encabezados y la palabra EQUIPO de cualquier campo
+  // --- Sanitización final ---
+  // Encabezados a eliminar si vinieran pegados en la misma línea del valor
   const HEADER_RE = new RegExp(
     '^(?:'
       + 'D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q]'
@@ -319,18 +300,20 @@ function parseByRules(ocrRaw){
   const sanitizeHeaderValue = (s)=>{
     if(!s) return '';
     const up = String(s).toUpperCase().replace(HEADER_RE, '');
-    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
   };
-  const STRIP_EQUIPO_RE = /\\bEQUIPO\\b[:\\s-]*/g;
+
+  // Quitar la palabra EQUIPO de cualquier valor
+  const STRIP_EQUIPO_RE = /\bEQUIPO\b[:\s-]*/g;
   const stripEquipo = (s)=>{
     if(!s) return '';
     const up = String(s).toUpperCase().replace(STRIP_EQUIPO_RE, '');
-    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
   };
 
   domicilio    = tcase(stripEquipo(sanitizeHeaderValue(domicilio)));
   lugarNac     = tcase(stripEquipo(sanitizeHeaderValue(lugarNac)));
-  padres       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\\sY\\s/g, ' y ');
+  padres       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\sY\s/g, ' y ');
   nombre       = tcase(stripEquipo(nombre));
   apellidos    = stripEquipo(apellidos).toUpperCase();
   Nacionalidad = stripEquipo(Nacionalidad);

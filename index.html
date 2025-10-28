@@ -426,11 +426,30 @@ function fillFormFromParsed(p){
   if(p.Domicilio!=null) document.getElementById('Domicilio').value = p.Domicilio;
   validateAll();
 }
+// Limpia TODA la memoria y la UI: formulario, comparecencia y filiaciones
 function clearFormOnly(){
+  // 1) Vaciar formulario de filiación
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-    .forEach(id=>document.getElementById(id).value="");
+    .forEach(id=>{
+      const el=document.getElementById(id);
+      if (el) el.value="";
+    });
+
+  // 2) Vaciar comparecencia
+  const ta = document.getElementById('Doc');
+  if (ta) ta.value = "";
+
+  // 3) Resetear expediente completo (memoria)
+  expediente.doc = "";
+  expediente.filiaciones = [];
+
+  // 4) Refrescar contador y lista visible
+  updateCount(); // esto también vuelve a pintar la lista
+
+  // 5) Refrescar validaciones
   validateAll();
 }
+
 function processOCR(ocr){
   if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
   const parsed = parseByRules(ocr);
@@ -486,7 +505,7 @@ document.getElementById('download').addEventListener('click', ()=>{
 
   const d = new Date();
   const pad = n => String(n).padStart(2,'0');
-  const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.json`;
+  const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())} ${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.json`;
 
   const a=document.createElement('a');
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));

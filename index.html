@@ -27,7 +27,6 @@
       width:100%;padding:10px;border-radius:12px;background:rgba(10,16,28,.45);
       color:var(--fg);border:1px solid var(--border);outline:none;transition:border-color .15s
     }
-    /* bordes finos */
     input.valid,select.valid{border-color:var(--green)!important}
     input.invalid,select.invalid{border-color:var(--red)!important}
     .span2{grid-column:1/-1}
@@ -39,17 +38,14 @@
 <h1>FILIATRON</h1>
 
 <div class="grid two">
- <!-- ACCIONES -->
-<div class="card">
-  <div class="row">
-    <button class="btn" onclick="window.open('https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-ocr-dni','_blank','noopener')">
-      📷 Foto IA
-    </button>
-    <button class="btn" id="readAnalyze">Integrar</button>
-    <button class="btn secondary" id="clear" title="Limpiar">🧹</button>
+  <!-- ACCIONES -->
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="readAnalyze">Integrar</button>
+      <button class="btn secondary" id="clear" title="Limpiar">🧹</button>
+    </div>
   </div>
- 
-</div>
+
   <!-- CAMPOS -->
   <div class="card">
     <div class="fields">
@@ -74,16 +70,12 @@
       </div>
     </div>
     <div class="row">
-  <button class="btn" id="download">Descargar JSON</button>
-  <button class="btn" id="openIA" style="display:flex;gap:6px;align-items:center;">
-    📷 Foto IA
-  </button>
-</div>
+      <button class="btn" id="download">Descargar JSON</button>
+    </div>
   </div>
 </div>
 
 <script>
-/* ========= Utilidades básicas ========= */
 const toLines = (txt) => (txt || "")
   .split(/\r?\n/)
   .map(s => s.trim())
@@ -92,7 +84,6 @@ const toLines = (txt) => (txt || "")
 const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
 const ucase = s => (s||"").toUpperCase();
 
-/* ========= Lectura de portapapeles ========= */
 async function readFromClipboard(){
   try{
     const txt = await navigator.clipboard.readText();
@@ -105,14 +96,22 @@ async function readFromClipboard(){
 
 function parseByRules(ocrRaw){
   const lines = toLines(ocrRaw);
-  const U = lines.map(ucase);
+  const U = lines.map(s => (s||"")
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+  );
+
+  // SOLO estos tres encabezados, con tolerancia de OCR:
+  const RX_DOM  = /^\s*D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q][\s:.-]*$/;                   // DOMICILIO
+  const RX_LNAC = /^\s*L[UÜV][G6][A4]R\s*D[EE]?\s*N[ A]*A?C[IM1][IM1][E3][MN][T7][O0][\s:.-]*$/; // LUGAR DE NACIMIENTO
+  const RX_HIJO = /^\s*H[IJ1][J1][OA0](?:\/[A@])?\s*D[EE][\s:.-]*$/;                   // HIJO/A DE
 
   const isCodeToken = s => /^[A-Z0-9]{6,}$/.test((s||"").toUpperCase());
-  const isMrzLike = s => (s||"").includes("<");
+  const isMrzLike   = s => (s||"").includes("<");
   const nextPlainIndex = (start)=>{
     for(let i=start;i<lines.length;i++){
-      const up=U[i]||"";
-      const raw=lines[i]||"";
+      const up=U[i]||"", raw=lines[i]||"";
       if(!raw.trim()) continue;
       if(isMrzLike(up)) continue;
       if(up==="EQUIPO") continue;
@@ -122,31 +121,29 @@ function parseByRules(ocrRaw){
     return -1;
   };
 
-  /* ---- DOMICILIO: variantes + fallback primeras líneas (con consumo) ---- */
+  // DOMICILIO
   let domicilio = "";
-  let afterDomIdx = 0; // índice desde el que buscar el siguiente campo si no hay anclas
+  let afterDomIdx = 0;
   {
-    const isAddrHeader = (s) => /^(DOMICILIO|DIRECCION|DIRECCIÓN|DOM\.|DOMIC)$/.test(s);
+    const isAddrHeader = (s) => RX_DOM.test(s);
     const looksAddrLine = (s) => /(AVDA|AVENIDA|CALLE|C\.|C\/|CL |PZA|PLAZA|CTRA|CARRE|CARRETERA|URB|VIA)/.test(s);
-  
+
     let anchorIdx = U.findIndex(isAddrHeader);
     if (anchorIdx >= 0) {
       const l2 = lines[anchorIdx+1] || "";
       const l3 = lines[anchorIdx+2] || "";
       domicilio = [l2, l3].filter(Boolean).join(", ");
       domicilio = tcase(domicilio);
-      afterDomIdx = anchorIdx + 3; // pasamos más allá del bloque de domicilio
+      afterDomIdx = anchorIdx + 3;
     }
-  
     if (!domicilio) {
       const first = U[0] || "";
       if (looksAddrLine(first)) {
         domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
         domicilio = tcase(domicilio);
-        afterDomIdx = 2; // hemos consumido dos primeras líneas
+        afterDomIdx = 2;
       }
     }
-  
     if (!domicilio) {
       domicilio = [lines[0] || "", lines[1] || ""].filter(Boolean).join(", ");
       domicilio = tcase(domicilio);
@@ -154,11 +151,11 @@ function parseByRules(ocrRaw){
     }
   }
 
-  /* ---- LUGAR DE NACIMIENTO: ancla o búsqueda tras domicilio ---- */
+  // LUGAR DE NACIMIENTO
   let lugarNac = "";
-  let afterLugarIdx = afterDomIdx; // se actualizará al finalizar este bloque
+  let afterLugarIdx = afterDomIdx;
   {
-    const anchorIdx = U.findIndex(l => /^LUGAR\s+DE\s+NAC(IMIENTO)?$/.test(l));
+    const anchorIdx = U.findIndex(l => RX_LNAC.test(l));
     if (anchorIdx >= 0) {
       const a1 = lines[anchorIdx+1] || "";
       const a2 = lines[anchorIdx+2] || "";
@@ -183,12 +180,10 @@ function parseByRules(ocrRaw){
     }
   }
 
- /* ---- PADRES: ancla o búsqueda tras lugar de nacimiento ---- */
+  // PADRES
   let padres = "";
   {
-    const anchorIdx = U.findIndex(l =>
-      /^(HIJ[O0]\/?A)\s+DE$/.test(l) || /^PADRES?$/.test(l) || /PROGEN|TUTOR|REPRES/.test(l)
-    );
+    const anchorIdx = U.findIndex(l => RX_HIJO.test(l));
     let raw = "";
     if (anchorIdx >= 0) {
       raw = lines[anchorIdx+1] || "";
@@ -206,85 +201,136 @@ function parseByRules(ocrRaw){
     }
   }
 
-  /* ---- MRZ: intentar detectar las tres últimas líneas con '<' ---- */
-  function lastMrzTriplet(ls){
-    const withAngles = ls.filter(s => s.includes("<"));
-    if(withAngles.length >= 3){
-      return withAngles.slice(-3);
-    }
-    // fallback: tomar literalmente las últimas 3 líneas
-    return ls.slice(-3);
-  }
-  const [MRZ_L1_raw, MRZ_L2_raw, MRZ_L3_raw] = lastMrzTriplet(lines);
-  const MRZ_L1 = (MRZ_L1_raw || "").toUpperCase().replace(/\s+/g,"");
-  const MRZ_L2 = (MRZ_L2_raw || "").toUpperCase().replace(/\s+/g,"");
-  const MRZ_L3 = (MRZ_L3_raw || "").toUpperCase().replace(/\s+/g,"");
+  // MRZ detección con separadores de '<'
+  function detectMRZ(upperLines){
+    const isSeparator = (s)=> /^([<\s]){3,}$/.test((s||""));
+    const clean = (s)=> (s||"").replace(/\s+/g,'').toUpperCase();
+    const arr = upperLines.filter(s => s && s.trim() && !isSeparator(s));
 
-  /* ---- Nacionalidad desde L1 (variantes IDESP) ---- */
+    for(let i=0;i<arr.length;i++){
+      const s = arr[i];
+      if (/^I[DO]ESP/.test(s)){
+        const l1 = clean(s), l2 = clean(arr[i+1]||""), l3 = clean(arr[i+2]||"");
+        return [l1,l2,l3];
+      }
+    }
+    const l2Pattern = /^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/;
+    for(let j=0;j<arr.length;j++){
+      const s = clean(arr[j]);
+      if (l2Pattern.test(s)){
+        const l1 = clean(arr[j-1]||""), l2 = s, l3 = clean(arr[j+1]||"");
+        return [l1,l2,l3];
+      }
+    }
+    const withAngles = arr.filter(s => (s||"").includes("<"));
+    if (withAngles.length >= 3) return withAngles.slice(-3).map(clean);
+    const last3Any = arr.slice(-3).map(clean);
+    while (last3Any.length < 3) last3Any.unshift("");
+    return last3Any;
+  }
+  const [MRZ_L1, MRZ_L2, MRZ_L3] = detectMRZ(U);
+
   function isSpainFromL1(l1){
-    // Normalizamos confusiones comunes: 1→I, l→I, 5→S, 0/O→O, B no afecta, D/O ambiguo
-    const norm = l1
-      .replace(/[1lİＩ]/g,'I')
-      .replace(/[5Ｓ]/g,'S')
-      .replace(/[0Ｏ]/g,'O');
-    // Aceptar I(D|O)ESP al inicio
+    const norm = l1.replace(/[1lİＩ]/g,'I').replace(/[5Ｓ]/g,'S').replace(/[0Ｏ]/g,'O');
     return /^I[DO]ESP/.test(norm);
   }
   let Nacionalidad = "";
-  if (MRZ_L1 && isSpainFromL1(MRZ_L1)) {
-    Nacionalidad = "España";
-  }
+  if (MRZ_L1 && isSpainFromL1(MRZ_L1)) Nacionalidad = "España";
 
-  /* ---- Nº de documento desde L1: 9 previos al primer "<<<" ---- */
-  function docFromL1(l1){
+  // Nº documento desde L1 (9 previos a <<<) o corte de línea
+  function docFromL1(l1, l2){
     const m = l1.match(/<{3,}/);
-    if(!m) return "";
-    const idx = m.index;
-    if(idx < 9) return "";
-    const cand = l1.slice(idx-9, idx);
-    return /^[0-9]{8}[A-Z]$/.test(cand) ? cand : "";
+    if (m){
+      const idx = m.index;
+      if (idx >= 9) return l1.slice(idx-9, idx).toUpperCase();
+    }
+    if (l2 && /^(<|<+)/.test(l2)){
+      const clean = l1.replace(/</g,'');
+      if (clean.length >= 9) return clean.slice(-9).toUpperCase();
+    }
+    return "";
   }
-  const numDoc = MRZ_L1 ? docFromL1(MRZ_L1) : "";
+  let numDoc = MRZ_L1 ? docFromL1(MRZ_L1, MRZ_L2) : "";
+  if (!numDoc && MRZ_L1){ // fallback 8 dígitos + 1 letra en L1
+    const mAlt = MRZ_L1.match(/([0-9]{8}[A-Z])/);
+    if (mAlt) numDoc = mAlt[1].toUpperCase();
+  }
 
- /* ---- Fecha, Sexo y Nacionalidad desde L2 ---- */
-let fechaNac = "";
-let sexo = "";
-{
-  // L2 típico: YY MM DD (check) SEX EXPYY EXPMM EXPDD (check) NAT...
-  // Ej.: 8001014F2501017ESP<<<<<<<<<<<7
-  const m = MRZ_L2.match(
-    /^(\d{2})(\d{2})(\d{2})\d([MF])(\d{2})(\d{2})(\d{2})\d([A-Z]{3})/
-  );
-  if (m) {
-    const yy = parseInt(m[1], 10), mm = m[2], dd = m[3];
-    const year = yy >= 30 ? 1900 + yy : 2000 + yy;
-    fechaNac = `${dd}/${mm}/${year}`;
-    sexo = m[4] === "F" ? "FEMENINO" : "MASCULINO";
-
-    // Nacionalidad desde L2 si aún no la tenemos
-    const nat3 = m[8];
+  // Fecha/Sexo/Nacionalidad desde L2
+  let fechaNac = "", sexo = "";
+  {
+    const mapDigit = (ch)=>{
+      if (/[0-9]/.test(ch)) return ch;
+      const t = ch.toUpperCase();
+      if (t==='O' || t==='Q') return '0';
+      if (t==='I' || t==='L') return '1';
+      if (t==='Z') return '2';
+      if (t==='S') return '5';
+      if (t==='B') return '8';
+      return '0';
+    };
+    const m = MRZ_L2.match(/^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
+    if (m) {
+      const yy = parseInt(mapDigit(m[1][0]) + mapDigit(m[1][1]),10);
+      const mm = mapDigit(m[2][0]) + mapDigit(m[2][1]);
+      const dd = mapDigit(m[3][0]) + mapDigit(m[3][1]);
+      const year = yy >= 30 ? 1900 + yy : 2000 + yy;
+      fechaNac = `${dd}/${mm}/${year}`;
+      sexo = m[4] === "F" ? "FEMENINO" : "MASCULINO";
+    }
     if (!Nacionalidad) {
-      Nacionalidad = nat3 === "ESP" ? "España" : nat3;
+      if (MRZ_L1 && isSpainFromL1(MRZ_L1)) {
+        Nacionalidad = "España";
+      } else if (MRZ_L2.includes("ESP")) {
+        Nacionalidad = "España";
+      }
     }
   }
-}
 
-  /* ---- Nombres y apellidos desde L3 ---- */
+  // Nombres/apellidos desde L3
   let nombre = "", apellidos = "";
   if(MRZ_L3){
     const parts = MRZ_L3.split("<").filter(Boolean);
-    const ap1 = parts[0] || "";
-    const ap2 = parts[1] || "";
-    const nom1 = parts[2] || "";
-    const nom2 = parts[3] || "";
-    apellidos = [ap1, ap2].filter(Boolean).join(" ").trim();
-    nombre = [nom1, nom2].filter(Boolean).join(" ").trim();
-    apellidos = apellidos.toUpperCase();
-    nombre = tcase(nombre);
+    const ap1 = parts[0] || "", ap2 = parts[1] || "";
+    const nom1 = parts[2] || "", nom2 = parts[3] || "";
+    apellidos = [ap1, ap2].filter(Boolean).join(" ").trim().toUpperCase();
+    nombre = tcase([nom1, nom2].filter(Boolean).join(" ").trim());
   }
 
-  /* ---- Tipo de documento (reverso DNI) ---- */
+  // Tipo documento
   let tipo = "DNI";
+
+  // Sanitización final: eliminar encabezados y la palabra EQUIPO de cualquier campo
+  const HEADER_RE = new RegExp(
+    '^(?:'
+      + 'D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q]'
+      + '|L[UÜV][G6][A4]R\\s*D[EE]?\\s*N[ A]*A?C[IM1][IM1][E3][MN][T7][O0]'
+      + '|H[IJ1][J1][OA0](?:\\/[A@])?\\s*D[EE]'
+    + ')[\\s:.-]*'
+  , 'g');
+
+  const sanitizeHeaderValue = (s)=>{
+    if(!s) return '';
+    const up = String(s).toUpperCase().replace(HEADER_RE, '');
+    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+  };
+  const STRIP_EQUIPO_RE = /\\bEQUIPO\\b[:\\s-]*/g;
+  const stripEquipo = (s)=>{
+    if(!s) return '';
+    const up = String(s).toUpperCase().replace(STRIP_EQUIPO_RE, '');
+    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+  };
+
+  domicilio    = tcase(stripEquipo(sanitizeHeaderValue(domicilio)));
+  lugarNac     = tcase(stripEquipo(sanitizeHeaderValue(lugarNac)));
+  padres       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\\sY\\s/g, ' y ');
+  nombre       = tcase(stripEquipo(nombre));
+  apellidos    = stripEquipo(apellidos).toUpperCase();
+  Nacionalidad = stripEquipo(Nacionalidad);
+  tipo         = stripEquipo(tipo);
+  fechaNac     = stripEquipo(fechaNac);
+  sexo         = stripEquipo(sexo);
+  if (numDoc)   numDoc = stripEquipo(numDoc);
 
   return {
     Nombre: nombre,
@@ -300,7 +346,6 @@ let sexo = "";
   };
 }
 
-/* ========= Validación visual / filename ========= */
 function validateAll(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
@@ -312,10 +357,10 @@ function validateAll(){
 }
 function updateFilename(){
   const ap=(document.getElementById('Apellidos').value||"APELLIDOS").trim();
-  document.getElementById('fname').textContent = ap + ".json";
+  const el=document.getElementById('fname');
+  if (el) el.textContent = ap + ".json";
 }
 
-/* ========= Núcleo: leer → aplicar reglas → rellenar ========= */
 function fillFormFromParsed(p){
   if(p.Nombre)  document.getElementById('Nombre').value = p.Nombre;
   if(p.Apellidos) document.getElementById('Apellidos').value = p.Apellidos;
@@ -327,19 +372,16 @@ function fillFormFromParsed(p){
   if(p["Fecha de nacimiento"]) document.getElementById('Nacimiento').value = p["Fecha de nacimiento"];
   if(p["Lugar de nacimiento"]) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
   if(p.Domicilio) document.getElementById('Domicilio').value = p.Domicilio;
-
   updateFilename();
   validateAll();
 }
 
 function processOCR(ocr){
   if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
-  // Aplicar exactamente tus reglas al OCR bruto
   const parsed = parseByRules(ocr);
   fillFormFromParsed(parsed);
 }
 
-/* ========= Botones ========= */
 document.getElementById('readAnalyze').addEventListener('click', async ()=>{
   const ocr = await readFromClipboard();
   processOCR(ocr);
@@ -351,7 +393,6 @@ document.getElementById('clear').addEventListener('click', ()=>{
 });
 document.getElementById('Apellidos').addEventListener('input', updateFilename);
 
-/* ========= Descargar JSON ========= */
 document.getElementById('download').addEventListener('click', ()=>{
   if(!document.getElementById('Condicion').value){
     alert("Condición obligatoria");
@@ -377,12 +418,7 @@ document.getElementById('download').addEventListener('click', ()=>{
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
   a.download=fname; a.click();
 });
-/* ========= Foto IA en pestaña nueva ========= */
-document.getElementById("openIA").addEventListener("click", ()=>{
-  const url = "https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-filiaciones-ocr-docu";
-  window.open(url, "_blank", "noopener");
-});
-/* ========= Estado inicial ========= */
+
 updateFilename();
 validateAll();
 </script>

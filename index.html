@@ -17,12 +17,12 @@
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;backdrop-filter:blur(10px)}
-    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
     .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
     .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
     .fields{display:grid;gap:12px;grid-template-columns:1fr}
     @media(min-width:760px){.fields{grid-template-columns:1fr 1fr}}
-    label{font-size:12px;margin-bottom:4px;color:#cfe0ff}
+    label{font-size:12px;margin-bottom:4px;color:#cfe0ff;display:block}
     input,select,textarea{
       width:100%;padding:10px;border-radius:12px;background:rgba(10,16,28,.45);
       color:var(--fg);border:1px solid var(--border);outline:none;transition:border-color .15s
@@ -31,10 +31,11 @@
     input.valid,select.valid{border-color:var(--green)!important}
     input.invalid,select.invalid{border-color:var(--red)!important}
     .span2{grid-column:1/-1}
-    .mono{font-size:12px}
-    .hint{font-size:12px;color:#bcd0f0}
     .badge{padding:4px 8px;border-radius:9999px;background:rgba(255,255,255,.12);border:1px solid var(--border);font-size:12px}
     .grow{flex:1}
+    ul.list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+    ul.list li{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:rgba(255,255,255,.06);font-size:12px}
+    ul.list li button{margin-left:8px}
   </style>
 </head>
 <body>
@@ -44,28 +45,31 @@
   <!-- ACCIONES -->
   <div class="card">
     <div class="row">
-      <button class="btn" id="readAnalyze">Integrar</button>
+      <button class="btn" id="readAnalyze">Integrar filiación</button>
       <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT</button>
-      <button class="btn secondary" id="clear" title="Limpiar">🧹</button>
-    </div>
-    <div class="row" style="margin-top:14px">
-      <button class="btn" id="addFiliacion">Agregar filiación al expediente</button>
-      <span class="badge">Filiaciones: <span id="countF">0</span></span>
       <div class="grow"></div>
-      <button class="btn" id="download">Descargar JSON</button>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <span class="badge">Filiaciones: <span id="countF">0</span></span>
+      <ul class="list" id="listaF"></ul>
+      <div class="grow"></div>
+      <button class="btn secondary" id="clearForm" title="Limpiar formulario">🧹</button>
     </div>
   </div>
 
-  <!-- CAMPOS + COMPARECENCIA -->
+  <!-- COMPARECENCIA + CAMPOS -->
   <div class="card">
     <div class="fields">
       <div class="span2">
         <label>Comparecencia (DOC)</label>
-        <textarea id="Doc" placeholder="Pega aquí la comparecencia al volver de GPT…"></textarea>
+        <div class="row" style="margin:6px 0 8px 0">
+          <button class="btn" id="integrarDoc">Integrar comparecencia</button>
+        </div>
+        <textarea id="Doc" placeholder="Pega aquí la comparecencia…"></textarea>
       </div>
 
-      <div class="span2"><div class="hint">Ficha actual de filiación (puedes Integrar varias veces y Agregar cada una)</div></div>
-
+      <!-- Ficha de filiación actual -->
       <div><label>Nombre</label><input id="Nombre"></div>
       <div><label>Apellidos (MAYÚSCULAS)</label><input id="Apellidos"></div>
       <div><label>Tipo de documento</label><input id="Tipo"></div>
@@ -84,6 +88,13 @@
           <option></option><option>Requirente</option><option>Perjudicado</option>
           <option>Testigo</option><option>Identificado</option><option>Detenido</option>
         </select>
+      </div>
+
+      <div class="span2"></div>
+      <div class="span2 row" style="margin-top:6px">
+        <button class="btn" id="addFiliacion">Agregar filiación al expediente</button>
+        <div class="grow"></div>
+        <button class="btn" id="download">Descargar proyecto</button>
       </div>
     </div>
   </div>
@@ -107,7 +118,7 @@ async function readFromClipboard(){
     const txt = await navigator.clipboard.readText();
     return txt || "";
   }catch{
-    const m = prompt("Pega manualmente el OCR (texto bruto, línea por línea):");
+    const m = prompt("Pega manualmente el texto:");
     return m || "";
   }
 }
@@ -311,39 +322,38 @@ function parseByRules(ocrRaw){
   const sanitizeHeaderValue = (s)=>{
     if(!s) return '';
     const up = String(s).toUpperCase().replace(HEADER_RE, '');
-    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
   };
-  const STRIP_EQUIPO_RE = /\\bEQUIPO\\b[:\\s-]*/g;
+  const STRIP_EQUIPO_RE = /\bEQUIPO\b[:\s-]*/g;
   const stripEquipo = (s)=>{
     if(!s) return '';
     const up = String(s).toUpperCase().replace(STRIP_EQUIPO_RE, '');
-    return up.replace(/^[\\s:.,-]+|[\\s:.,-]+$/g,'').replace(/\\s{2,}/g,' ').trim();
+    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
   };
 
-  domicilio    = tcase(stripEquipo(sanitizeHeaderValue(domicilio)));
-  lugarNac     = tcase(stripEquipo(sanitizeHeaderValue(lugarNac)));
-  padres       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\\sY\\s/g, ' y ');
-  nombre       = tcase(stripEquipo(nombre));
-  apellidos    = stripEquipo(apellidos).toUpperCase();
-  Nacionalidad = stripEquipo(Nacionalidad);
-  tipo         = stripEquipo(tipo);
-  fechaNac     = stripEquipo(fechaNac);
-  sexo         = stripEquipo(sexo);
-  if (numDoc)   numDoc = stripEquipo(numDoc);
+  // Aplicar limpieza
+  let domicilioFin    = tcase(stripEquipo(sanitizeHeaderValue(domicilio)));
+  let lugarNacFin     = tcase(stripEquipo(sanitizeHeaderValue(lugarNac)));
+  let padresFin       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\sY\s/g, ' y ');
+  let nombreFin       = tcase(stripEquipo(nombre));
+  let apellidosFin    = stripEquipo(apellidos).toUpperCase();
+  let nacionalidadFin = stripEquipo(Nacionalidad);
+  let tipoFin         = stripEquipo(tipo);
+  let fechaNacFin     = stripEquipo(fechaNac);
+  let sexoFin         = stripEquipo(sexo);
+  let numDocFin       = stripEquipo(numDoc || "");
 
   return {
-    Nombre: nombre,
-    Apellidos: apellidos,
-    "Tipo de documento": tipo,
-    "Nº Documento": numDoc,
-    Sexo: sexo,
-    Nacionalidad: Nacionalidad,
-    "Nombre de los Padres": padres,
-    "Fecha de nacimiento": fechaNac,
-    "Lugar de nacimiento": lugarNac,
-    Domicilio: domicilio,
-    "Teléfono": "", // campo presente en el formulario pero no procede del OCR
-    "Condición": ""  // idem
+    Nombre: nombreFin,
+    Apellidos: apellidosFin,
+    "Tipo de documento": tipoFin,
+    "Nº Documento": numDocFin,
+    Sexo: sexoFin,
+    Nacionalidad: nacionalidadFin,
+    "Nombre de los Padres": padresFin,
+    "Fecha de nacimiento": fechaNacFin,
+    "Lugar de nacimiento": lugarNacFin,
+    Domicilio: domicilioFin
   };
 }
 
@@ -358,12 +368,35 @@ function validateAll(){
 }
 function updateCount(){
   document.getElementById('countF').textContent = String(expediente.filiaciones.length);
+  renderLista();
 }
-function updateFilename(){
-  const ap=(document.getElementById('Apellidos').value||"APELLIDOS").trim();
-  const el=document.getElementById('fname');
-  if (el) el.textContent = ap + ".json";
+function renderLista(){
+  const ul = document.getElementById('listaF');
+  ul.innerHTML = "";
+  expediente.filiaciones.forEach((f,i)=>{
+    const li = document.createElement('li');
+    const label = `${i+1}. ${f.Apellidos || '(sin apellidos)'} ${f.Nombre ? ', '+f.Nombre : ''}`;
+    li.textContent = label;
+    const btn = document.createElement('button');
+    btn.className = "btn secondary";
+    btn.textContent = "Editar";
+    btn.onclick = ()=> {
+      // Cargar en formulario y quitar de la lista para re-guardar al terminar
+      fillFormFromParsed(f);
+      ["Telefono","Condicion"].forEach(id=>{
+        const el=document.getElementById(id);
+        if (id==="Telefono" && f["Teléfono"]!=null) el.value = f["Teléfono"];
+        if (id==="Condicion" && f["Condición"]!=null) el.value = f["Condición"];
+      });
+      expediente.filiaciones.splice(i,1);
+      updateCount();
+    };
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
 }
+function updateFilename(){ /* ya no usamos apellidos para nombre */ }
+
 function getFormAsFiliacion(){
   return {
     "Nombre": document.getElementById('Nombre').value,
@@ -381,17 +414,22 @@ function getFormAsFiliacion(){
   };
 }
 function fillFormFromParsed(p){
-  if(p.Nombre)  document.getElementById('Nombre').value = p.Nombre;
-  if(p.Apellidos) document.getElementById('Apellidos').value = p.Apellidos;
-  if(p["Tipo de documento"]) document.getElementById('Tipo').value = p["Tipo de documento"];
-  if(p["Nº Documento"]) document.getElementById('Numero').value = p["Nº Documento"];
-  if(p.Sexo) document.getElementById('Sexo').value = p.Sexo;
-  if(p.Nacionalidad) document.getElementById('Nacionalidad').value = p.Nacionalidad;
-  if(p["Nombre de los Padres"]) document.getElementById('Padres').value = p["Nombre de los Padres"];
-  if(p["Fecha de nacimiento"]) document.getElementById('Nacimiento').value = p["Fecha de nacimiento"];
-  if(p["Lugar de nacimiento"]) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
-  if(p.Domicilio) document.getElementById('Domicilio').value = p.Domicilio;
-  updateFilename(); validateAll();
+  if(p.Nombre!=null)  document.getElementById('Nombre').value = p.Nombre;
+  if(p.Apellidos!=null) document.getElementById('Apellidos').value = p.Apellidos;
+  if(p["Tipo de documento"]!=null) document.getElementById('Tipo').value = p["Tipo de documento"];
+  if(p["Nº Documento"]!=null) document.getElementById('Numero').value = p["Nº Documento"];
+  if(p.Sexo!=null) document.getElementById('Sexo').value = p.Sexo;
+  if(p.Nacionalidad!=null) document.getElementById('Nacionalidad').value = p.Nacionalidad;
+  if(p["Nombre de los Padres"]!=null) document.getElementById('Padres').value = p["Nombre de los Padres"];
+  if(p["Fecha de nacimiento"]!=null) document.getElementById('Nacimiento').value = p["Fecha de nacimiento"];
+  if(p["Lugar de nacimiento"]!=null) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
+  if(p.Domicilio!=null) document.getElementById('Domicilio').value = p.Domicilio;
+  validateAll();
+}
+function clearFormOnly(){
+  ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
+    .forEach(id=>document.getElementById(id).value="");
+  validateAll();
 }
 function processOCR(ocr){
   if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
@@ -409,33 +447,29 @@ document.getElementById('gptComparecencia').addEventListener('click', ()=>{
   window.open('https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-comparecencia','_blank','noopener');
 });
 
-document.getElementById('addFiliacion').addEventListener('click', ()=>{
-  const f = getFormAsFiliacion();
-  expediente.filiaciones.push(f);
-  updateCount();
-  // no limpio automáticamente para permitir correcciones; si quieres limpiar, descomenta:
-  // ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"].forEach(id=>document.getElementById(id).value="");
-  validateAll();
+document.getElementById('integrarDoc').addEventListener('click', async ()=>{
+  const txt = await readFromClipboard();
+  if (!txt.trim()) { alert("Portapapeles vacío."); return; }
+  document.getElementById('Doc').value = txt;
+  expediente.doc = txt;
 });
 
-document.getElementById('clear').addEventListener('click', ()=>{
-  ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
-    .forEach(id=>document.getElementById(id).value="");
-  document.getElementById('Doc').value = "";
-  expediente.doc = "";
-  expediente.filiaciones = [];
+document.getElementById('addFiliacion').addEventListener('click', ()=>{
+  const f = getFormAsFiliacion();
+  const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
+  if (!anyVal){ alert("Ficha vacía."); return; }
+  expediente.filiaciones.push(f);
   updateCount();
-  validateAll();
+  clearFormOnly(); // vaciar para siguiente filiación
 });
+
+document.getElementById('clearForm').addEventListener('click', clearFormOnly);
 
 document.getElementById('Doc').addEventListener('input', (e)=>{
   expediente.doc = e.target.value;
 });
 
-document.getElementById('Apellidos').addEventListener('input', updateFilename);
-
 document.getElementById('download').addEventListener('click', ()=>{
-  // doc en memoria + filiaciones acumuladas
   expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
 
   // Si no hay ninguna filiación acumulada, al menos guardo la actual si tiene algo
@@ -450,8 +484,10 @@ document.getElementById('download').addEventListener('click', ()=>{
     filiaciones: expediente.filiaciones
   };
 
-  const ap = (document.getElementById('Apellidos').value||"EXPEDIENTE").trim().toUpperCase();
-  const fname = `${ap}.json`;
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.json`;
+
   const a=document.createElement('a');
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
   a.download=fname; a.click();

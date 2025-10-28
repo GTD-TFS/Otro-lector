@@ -114,7 +114,14 @@ function parseByRules(ocrRaw){
       const up=U[i]||"", raw=lines[i]||"";
       if(!raw.trim()) continue;
       if(isMrzLike(up)) continue;
-      if(up==="EQUIPO") continue;
+      if (up === "EQUIPO") {
+        // Saltar "EQUIPO" y, si la siguiente línea parece numérica/código, saltarla también
+        const nxtU = U[i+1] || "";
+        const nxtRaw = lines[i+1] || "";
+        const looksNumericOrCode = /[0-9]/.test(nxtRaw) || /^[A-Z0-9]{4,}$/.test(nxtU);
+        if (looksNumericOrCode) { i++; }
+        continue;
+      }
       if(isCodeToken(up)) continue;
       return i;
     }

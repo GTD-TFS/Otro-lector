@@ -483,13 +483,14 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // PADRES (una sola línea): base "DE ... IDESP"; extrae 2 nombres con librería
-  let padres = "";
-  {
-    const s = NS;
-    const stop = gStop; // hasta IDESP/IOESP/< o EQUIPO
-    let start = -1;
-    let padresUncertain = true;
+  // PADRES (NS): desde el 'DE' inmediatamente anterior a IDESP/IOESP/< o EQUIPO hasta stop
+let padres = ""; 
+let padresUncertain = true;
+{
+  const s = NS;
+  const stop = gStop; // hasta IDESP/IOESP/< o EQUIPO
+  let start = -1;
+  // (elimina la línea `let padresUncertain = true;` aquí)
 
     // Regla base: usar el "DE" detectado justo antes del bloque MRZ/EQUIPO
     if (gParentsDE !== -1) start = gParentsDE + 2; // tras 'DE'

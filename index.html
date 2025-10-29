@@ -456,46 +456,64 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // PADRES (una sola línea): tras HIJO/A DE hasta IDESP/IOESP/< o EQUIPO
+  // PADRES (una sola línea): ancla en el "DE" de HIJO/A DE (o fallback) y extrae 2 nombres con librería
   let padres = "";
-  if (idxHIJO !== -1){
+  {
     const s = NS;
+
+    // Determinar límite de fin (antes de MRZ/EQUIPO)
+    const stopIDESP = s.indexOf('IDESP');
+    const stopIOESP = s.indexOf('IOESP');
+    const stopLT    = s.indexOf('<');
+    const stopEQ    = s.indexOf('EQUIPO');
+    const stops = [stopIDESP, stopIOESP, stopLT, stopEQ].filter(i=>i!==-1);
+    const stop = stops.length ? Math.min(...stops) : s.length;
+
+    // Primario: detectar HIJO/ADE y fijar start justo después de su "DE"
     const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
     const mH = rxHijo.exec(s);
-    if (mH){
-      const start = mH.index + mH[0].length;
-      const idxIDESP = s.indexOf('IDESP', start);
-      const idxIOESP = s.indexOf('IOESP', start);
-      const idxLT    = s.indexOf('<', start);
-      const idxEQ    = s.indexOf('EQUIPO', start);
-      const candidates = [idxIDESP, idxIOESP, idxLT, idxEQ].filter(i=>i!==-1);
-      const end = candidates.length ? Math.min(...candidates) : s.length;
+    let start = -1;
+    if (mH && mH.index + mH[0].length <= stop){
+      start = mH.index + mH[0].length; // justo después de "DE"
+    }
 
-      let seg = s.slice(start, end);
+    // Fallback: si no hay match robusto, busca un "DE" inmediatamente antes del bloque MRZ/EQUIPO
+    if (start === -1){
+      // ventana de 12 chars antes del stop para capturar el "...ADE" de HIJO/ADE
+      const winStart = Math.max(0, stop - 12);
+      const posDE = s.lastIndexOf('DE', stop);
+      if (posDE >= winStart && posDE !== -1){
+        start = posDE + 2;
+      }
+    }
+
+    if (start !== -1 && start < stop){
+      let seg = s.slice(start, stop);
+      // cortar números basura si se cuelan
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      // Normalización de separadores y limpieza básica (no forzamos 'y' aquí)
+      // limpieza de separadores a espacios
       seg = seg
-        .replace(/[\/|!¡]+/g, ' ')   // separadores raros a espacio
-        .replace(/[,.;:]+/g, ' ')    // signos a espacio
+        .replace(/[\/_|!¡]+/g, ' ')
+        .replace(/[,.;:]+/g, ' ')
         .replace(/\s{2,}/g,' ')
         .trim();
 
-      // Intento principal: detectar dos nombres práct. seguidos usando la librería
+      // Detectar dos nombres casi seguidos usando la librería de nombres
       const tokens = seg.split(/\s+/).filter(Boolean);
       let chosen = [];
-      for (let i = 0; i < tokens.length && chosen.length < 2; i++) {
+      for (let i = 0; i < tokens.length && chosen.length < 2; i++){
         const w = tokens[i];
         const chk = isNombre(w);
-        if (chk && chk.ok) {
+        if (chk && chk.ok){
           chosen.push(w);
         }
       }
 
-      if (chosen.length === 2) {
+      if (chosen.length === 2){
         padres = `${chosen[0]} y ${chosen[1]}`.trim();
       } else {
-        // Fallback: si no se detectan dos nombres claros, dejamos el texto limpio
+        // fallback: deja el texto limpio
         padres = seg;
       }
     }

@@ -33,7 +33,7 @@
       content:"";
       position:fixed;
       inset:0;
-      background:linear-gradient(180deg, rgba(11,18,32,.45), rgba(11,18,32,.50));
+      background:linear-gradient(180deg, rgba(11,18,32,.85), rgba(11,18,32,.010));
       z-index:-1;
       pointer-events:none;
     }
@@ -54,7 +54,7 @@
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{
-     background:linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.003));
+      background:linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,.003));
       border:1px solid var(--border);
       border-radius:14px;
       padding:16px;
@@ -519,30 +519,38 @@ const adeIdxs = (()=> {
   }
 }
 
-  // --- MRZ (L1/L2/L3) con tolerancia ---
-  let MRZ_L1="", MRZ_L2="", MRZ_L3="";
-  if (idxIDESP !== -1){
-    const g1 = NS.indexOf('<<<', idxIDESP);
-    if (g1 !== -1){
-      MRZ_L1 = NS.slice(idxIDESP, g1);
-      // busca ventana para L2 (no dependas estrictamente de g2)
-      const afterESP = NS.indexOf('ESP', g1);
-      if (afterESP !== -1){
-        // ventana razonable tras ESP
-        const win = NS.slice(g1+3, Math.min(NS.length, afterESP + 90));
-        const m = win.match(/([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
-        if (m) MRZ_L2 = m[0];
-        // L3: segundo "<<<" tras ESP, luego letras
-        const gg1 = NS.indexOf('<<<', afterESP+3);
-        const gg2 = NS.indexOf('<<<', gg1+3);
-        if (gg1 !== -1 && gg2 !== -1){
-          let s = gg2 + 3;
-          while (s < NS.length && !/[A-ZÑ<]/.test(NS[s])) s++;
-          MRZ_L3 = NS.slice(s);
-        }
-      }
-    }
+  // --- MRZ (L1/L2/L3) ROBUSTO: no depende del final ni de un segundo "<<<" ---
+let MRZ_L1 = "", MRZ_L2 = "", MRZ_L3 = "";
+if (idxIDESP !== -1) {
+  // L1: desde IDESP hasta el PRIMER "<<<" que siga
+  const firstArrows = NS.indexOf('<<<', idxIDESP);
+  if (firstArrows !== -1) {
+    MRZ_L1 = NS.slice(idxIDESP, firstArrows);
+
+    // L2: buscar patrón YYMMDD? + sexo [MF] en una VENTANA limitada tras el primer "<<<"
+    // Ventana: desde firstArrows+3 hasta +180 chars (cap) o final de cadena
+    const winEnd = Math.min(NS.length, firstArrows + 180);
+    const winL2 = NS.slice(firstArrows + 3, winEnd);
+    // Permitimos letras OCR en YY/MM/DD (mapDigit ya corrige al leer)
+    const mL2 = winL2.match(/([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
+    if (mL2) MRZ_L2 = mL2[0];
+
+    // L3: tras "ESP" si existe; si no, tras la misma ventana; NO exige segundo "<<<"
+    const idxESPwin = winL2.indexOf('ESP');
+    let afterIdxAbs = firstArrows + 3; // por defecto, empieza tras el primer "<<<"
+    if (idxESPwin !== -1) afterIdxAbs = firstArrows + 3 + idxESPwin + 3;
+
+    // Si hay un "<<<" después de afterIdxAbs, arrancamos tras él; si no, desde afterIdxAbs
+    const nextArrows = NS.indexOf('<<<', afterIdxAbs);
+    let l3Start = (nextArrows !== -1) ? nextArrows + 3 : afterIdxAbs;
+
+    // Avanza hasta la primera letra o '<' (salta basura/guiones/cifras)
+    while (l3Start < NS.length && !/[A-Z<]/.test(NS[l3Start])) l3Start++;
+
+    // Toma hasta 120 chars máximo (evita chupar basura del final)
+    MRZ_L3 = NS.slice(l3Start, Math.min(NS.length, l3Start + 120));
   }
+}
 
   // Nº doc desde L1/L2
   function docFromL1L2(l1,l2){

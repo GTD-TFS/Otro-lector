@@ -18,7 +18,7 @@
       /* Fondo con imagen */
       background:
         linear-gradient(180deg, rgba(11,18,32,.85), rgba(11,18,32,.88)),
-        url('aq.jpeg) center / cover no-repeat fixed;
+        url('aq.png') center / cover no-repeat fixed;
       min-height:100dvh;
     }
     h1{
@@ -273,7 +273,15 @@ function parseByRules(ocrRaw){
   const raw = ocrRaw || "";
   const lines = toLines(raw);
   const U = lines.map(normalize);
-  const NS = noSpace(raw);
+  const upRaw = normalize(raw);
+  let NS = '';
+  const NS_MAP = [];
+  for (let i = 0; i < upRaw.length; i++){
+    const ch = upRaw[i];
+    if (/\s/.test(ch)) continue; // quitamos espacios
+    NS += ch;
+    NS_MAP.push(i); // posición correspondiente en raw/upRaw
+  }
 
   // Encabezados tolerantes (comparación sin espacios)
   const RX_DOM_NS  = /^D[O0Q]M[IL1]C[ÇC][IL1][L1I][IO0Q]$/;
@@ -314,10 +322,29 @@ function parseByRules(ocrRaw){
       let domNS = s.slice(start, end).trim();
       const suf = matchMunicipioSuffixNS(domNS);
       if (suf) {
-        const streetNS = domNS.slice(0, suf.index);
-        domicilio = streetNS + ', ' + suf.canon; // calle + municipio
+        const nsStart = start;
+        const nsEndStreet = start + suf.index; // fin de la calle dentro de NS
+        const rawStart = NS_MAP[nsStart] ?? 0;
+        const rawEndStreet = (NS_MAP[nsEndStreet-1] ?? NS_MAP[NS_MAP.length-1]) + 1;
+        let streetRaw = raw.slice(rawStart, rawEndStreet);
+        streetRaw = streetRaw
+          .replace(/\s*,\s*/g, ', ')
+          .replace(/\.([A-Za-zÁÉÍÓÚÜÑ])/g, '. $1')
+          .replace(/([A-Za-zÁÉÍÓÚÜÑ])(\d)/g, '$1 $2')
+          .replace(/(\d)([A-Za-zÁÉÍÓÚÜÑ])/g, '$1 $2')
+          .replace(/\s{2,}/g,' ')
+          .trim();
+        domicilio = streetRaw + ', ' + suf.canon; // calle con espaciado + municipio canónico
       } else {
-        domicilio = domNS;
+        // sin municipio detectable: devolver el trozo original con espaciado mínimo
+        const rawStart = NS_MAP[start] ?? 0;
+        const rawEnd = (NS_MAP[end-1] ?? NS_MAP[NS_MAP.length-1]) + 1;
+        let streetRaw = raw.slice(rawStart, rawEnd)
+          .replace(/\s*,\s*/g, ', ')
+          .replace(/\.([A-Za-zÁÉÍÓÚÜÑ])/g, '. $1')
+          .replace(/\s{2,}/g,' ')
+          .trim();
+        domicilio = streetRaw;
       }
     }
   }

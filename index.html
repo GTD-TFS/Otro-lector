@@ -17,7 +17,7 @@
       color:var(--fg);
       /* Fondo con imagen */
       background:
-        linear-gradient(180deg, rgba(11,18,32,.85), rgba(11,18,32,.88)),
+        linear-gradient(180deg, rgba(11,18,32,.60), rgba(11,18,32,.60)),
         url('aq.png') center / cover no-repeat fixed;
       min-height:100dvh;
     }
@@ -394,18 +394,30 @@ function parseByRules(ocrRaw){
       let seg = s.slice(start, end);
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
+      // Normalización de separadores y limpieza básica (no forzamos 'y' aquí)
       seg = seg
-        .replace(/[\/|!¡]+/g, ' y ')
-        .replace(/I{2,}|L{2,}/g, ' y ')
-        .replace(/\s{2,}/g,' ').trim();
+        .replace(/[\/|!¡]+/g, ' ')   // separadores raros a espacio
+        .replace(/[,.;:]+/g, ' ')    // signos a espacio
+        .replace(/\s{2,}/g,' ')
+        .trim();
 
-      const partes = seg.split(/\s+y\s+/i).slice(0,2).filter(Boolean);
-      const partesVal = partes.map(p => {
-        const words = p.split(/\s+/).filter(Boolean);
-        const out = words.map(w => (isNombre(w).ok ? w : w));
-        return out.join(' ');
-      });
-      padres = partesVal.join(' y ').trim();
+      // Intento principal: detectar dos nombres práct. seguidos usando la librería
+      const tokens = seg.split(/\s+/).filter(Boolean);
+      let chosen = [];
+      for (let i = 0; i < tokens.length && chosen.length < 2; i++) {
+        const w = tokens[i];
+        const chk = isNombre(w);
+        if (chk && chk.ok) {
+          chosen.push(w);
+        }
+      }
+
+      if (chosen.length === 2) {
+        padres = `${chosen[0]} y ${chosen[1]}`.trim();
+      } else {
+        // Fallback: si no se detectan dos nombres claros, dejamos el texto limpio
+        padres = seg;
+      }
     }
   }
 

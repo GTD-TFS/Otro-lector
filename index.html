@@ -76,6 +76,7 @@
     ul.list li{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:rgba(255,255,255,.06);font-size:12px}
     ul.list li button{margin-left:8px}
   </style>
+  <link rel="preload" as="image" href="aq.png">
 </head>
 <body>
 <h1>FILIATRON</h1>
@@ -228,6 +229,36 @@ function matchMunicipioSuffixNS(ns){
   return null;
 }
 // ---------------------------------------------------------------------------
+// --- PROVINCIAS: set y mapa sin espacios -----------------------------------
+const PROVINCIAS = [
+  "A CORUÑA","ÁLAVA","ALAVA","ALBACETE","ALICANTE","ALMERÍA","ALMERIA","ASTURIAS","ÁVILA","AVILA",
+  "BADAJOZ","BARCELONA","BIZKAIA","VIZCAYA","BURGOS","CÁCERES","CACERES","CÁDIZ","CADIZ","CANTABRIA",
+  "CASTELLÓN","CASTELLON","CIUDAD REAL","CÓRDOBA","CORDOBA","CUENCA","GIRONA","GERONA","GRANADA",
+  "GUADALAJARA","GUIPÚZCOA","GUIPUZCOA","GIPUZKOA","HUELVA","HUESCA","ILLES BALEARS","ISLAS BALEARES",
+  "JAÉN","JAEN","LA RIOJA","LAS PALMAS","LEÓN","LEON","LLEIDA","LUGO","MADRID","MÁLAGA","MALAGA",
+  "MURCIA","NAVARRA","NAFARROA","OURENSE","ORENSE","PALENCIA","PONTEVEDRA","SALAMANCA",
+  "SANTA CRUZ DE TENERIFE","SEGOVIA","SEVILLA","SORIA","TARRAGONA","TERUEL","TOLEDO",
+  "VALENCIA","VALLADOLID","ZAMORA","ZARAGOZA","CEUTA","MELILLA"
+].map(x => normalize(x));
+
+let PROVINCIAS_SET = new Set(PROVINCIAS);
+let PROVINCIAS_NOSPACE = new Map([...PROVINCIAS_SET].map(p => [p.replace(/\s+/g,''), p]));
+
+// Devuelve la PRIMERA provincia que aparece en la cadena sin espacios `ns` a partir de `start`
+function findProvinceAfter(ns, start=0){
+  if (!ns || !PROVINCIAS_NOSPACE.size) return null;
+  let best = null;
+  for (const [pNS, canon] of PROVINCIAS_NOSPACE.entries()){
+    const idx = ns.indexOf(pNS, start);
+    if (idx !== -1){
+      if (!best || idx < best.index || (idx === best.index && pNS.length > best.pNS.length)){
+        best = { index: idx, canon, pNS };
+      }
+    }
+  }
+  return best; // {index, canon, pNS} o null
+}
+// ---------------------------------------------------------------------------
 
 // --- NOMBRES: loader + validador (SOLO JSON externo, sin embed) -------------
 let NOMBRES_SET = new Set();
@@ -317,7 +348,9 @@ function parseByRules(ocrRaw){
       const a5 = s.indexOf('IOESP', start);
       const a6 = s.indexOf('<', start);
       const candidates = [a1,a1b,a2,a3,a3b,a4,a5,a6].filter(i=>i!==-1);
-      const end = candidates.length ? Math.min(...candidates) : s.length;
+      const pv = findProvinceAfter(s, start);
+      const anchorEnd = candidates.length ? Math.min(...candidates) : s.length;
+      const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
 
       let domNS = s.slice(start, end).trim();
       const suf = matchMunicipioSuffixNS(domNS);
@@ -366,13 +399,37 @@ function parseByRules(ocrRaw){
       const a5 = s.indexOf('DOMICILIO', start);
       const a6 = s.indexOf('EQUIPO', start);
       const candidates = [a1,a1b,a2,a3,a4,a5,a6].filter(i=>i!==-1);
-      const end = candidates.length ? Math.min(...candidates) : s.length;
+      const pv = findProvinceAfter(s, start);
+      const anchorEnd = candidates.length ? Math.min(...candidates) : s.length;
+      const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
+
+      // Segmento hasta provincia (si hay). Esto suele ser el MUNICIPIO (pegado en NS)
       let seg = s.slice(start, end);
+
+      // Corta números basura si se colaron
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      const rawLoc = seg.trim();
-      const mloc = matchMunicipio(rawLoc);
-      lugarNac = mloc.found ? mloc.canon : rawLoc;
+
+      const rawMunNS = seg.trim();                 // municipio en NS (pegado)
+      const munMatch = matchMunicipio(rawMunNS);   // intenta canonizar municipio
+
+      if (pv){ // hay provincia detectada
+        const provCanon = tcase(pv.canon);
+        const munCanon = munMatch.found ? tcase(munMatch.canon) : tcase(rawMunNS);
+
+        if (!rawMunNS || normalize(munCanon) === normalize(pv.canon)){
+          // Caso MADRIDMADRID o municipio vacío: no duplicar
+          lugarNac = provCanon;
+        } else {
+          // Caso ALCOBENDASMADRID: mapea "Alcobendas, Madrid"
+          lugarNac = `${munCanon}, ${provCanon}`;
+        }
+      } else {
+        // Sin provincia detectada: comportamiento previo
+        const rawLoc = rawMunNS;
+        const mloc = matchMunicipio(rawLoc);
+        lugarNac = mloc.found ? tcase(mloc.canon) : tcase(rawLoc);
+      }
     }
   }
 

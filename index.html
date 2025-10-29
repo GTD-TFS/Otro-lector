@@ -354,6 +354,21 @@ function parseByRules(ocrRaw){
   const idxHIJO = findHeaderLine(RX_HIJO_NS);
   const idxEQUIPO = U.findIndex(s => s.trim() === 'EQUIPO');
 
+  // --- Anclajes globales para zonas (usados por LUGAR y PADRES)
+  const S_ALL = NS; // alias
+  const gStopIDESP = S_ALL.indexOf('IDESP');
+  const gStopIOESP = S_ALL.indexOf('IOESP');
+  const gStopLT    = S_ALL.indexOf('<');
+  const gStopEQ    = S_ALL.indexOf('EQUIPO');
+  const gStopsArr  = [gStopIDESP, gStopIOESP, gStopLT, gStopEQ].filter(i=>i!==-1);
+  const gStop      = gStopsArr.length ? Math.min(...gStopsArr) : S_ALL.length;
+  // Regla base PADRES: buscar el "DE" inmediatamente previo al bloque MRZ/EQUIPO
+  const gParentsDE = (function(){
+    const winStart = Math.max(0, gStop - 16); // ventana corta para capturar "...ADE"
+    const pos = S_ALL.lastIndexOf('DE', gStop);
+    return (pos >= winStart && pos !== -1) ? pos : -1;
+  })();
+
   // DOMICILIO (una sola línea usando NS): desde "DOMICILIO" hasta el primer anclaje siguiente
   let domicilio = "";
   {
@@ -424,7 +439,9 @@ function parseByRules(ocrRaw){
       const candidates = [a1,a1b,a2,a3,a4,a5,a6].filter(i=>i!==-1);
       const pv = findProvinceAfter(s, start);
       const anchorEnd = candidates.length ? Math.min(...candidates) : s.length;
-      const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
+      const parentsLimit = (gParentsDE !== -1 && gParentsDE > start) ? gParentsDE : Infinity;
+      const hardEnd = Math.min(anchorEnd, parentsLimit);
+      const end = (pv && pv.index < hardEnd) ? pv.index : hardEnd;
 
       // Segmento hasta provincia (si hay). Esto suele ser el MUNICIPIO (pegado en NS)
       let seg = s.slice(start, end);
@@ -456,65 +473,89 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // PADRES (una sola línea): ancla en el "DE" de HIJO/A DE (o fallback) y extrae 2 nombres con librería
+  // PADRES (una sola línea): base "DE ... IDESP"; extrae 2 nombres con librería
   let padres = "";
   {
     const s = NS;
-
-    // Determinar límite de fin (antes de MRZ/EQUIPO)
-    const stopIDESP = s.indexOf('IDESP');
-    const stopIOESP = s.indexOf('IOESP');
-    const stopLT    = s.indexOf('<');
-    const stopEQ    = s.indexOf('EQUIPO');
-    const stops = [stopIDESP, stopIOESP, stopLT, stopEQ].filter(i=>i!==-1);
-    const stop = stops.length ? Math.min(...stops) : s.length;
-
-    // Primario: detectar HIJO/ADE y fijar start justo después de su "DE"
-    const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
-    const mH = rxHijo.exec(s);
+    const stop = gStop; // hasta IDESP/IOESP/< o EQUIPO
     let start = -1;
-    if (mH && mH.index + mH[0].length <= stop){
-      start = mH.index + mH[0].length; // justo después de "DE"
-    }
 
-    // Fallback: si no hay match robusto, busca un "DE" inmediatamente antes del bloque MRZ/EQUIPO
+    // Regla base: usar el "DE" detectado justo antes del bloque MRZ/EQUIPO
+    if (gParentsDE !== -1) start = gParentsDE + 2; // tras 'DE'
+
+    // Si no hay gParentsDE, intenta regex de HIJO/ADE como respaldo
     if (start === -1){
-      // ventana de 12 chars antes del stop para capturar el "...ADE" de HIJO/ADE
-      const winStart = Math.max(0, stop - 12);
-      const posDE = s.lastIndexOf('DE', stop);
-      if (posDE >= winStart && posDE !== -1){
-        start = posDE + 2;
+      const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
+      const mH = rxHijo.exec(s);
+      if (mH && (mH.index + mH[0].length) < stop){
+        start = mH.index + mH[0].length;
       }
     }
 
     if (start !== -1 && start < stop){
       let seg = s.slice(start, stop);
-      // cortar números basura si se cuelan
+      // eliminar números colados
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      // limpieza de separadores a espacios
-      seg = seg
-        .replace(/[\/_|!¡]+/g, ' ')
-        .replace(/[,.;:]+/g, ' ')
-        .replace(/\s{2,}/g,' ')
-        .trim();
 
-      // Detectar dos nombres casi seguidos usando la librería de nombres
-      const tokens = seg.split(/\s+/).filter(Boolean);
-      let chosen = [];
-      for (let i = 0; i < tokens.length && chosen.length < 2; i++){
-        const w = tokens[i];
-        const chk = isNombre(w);
-        if (chk && chk.ok){
-          chosen.push(w);
+      // Pre-limpieza: convertir separadores en espacios virtuales
+      // Nota: en NS no hay espacios, así que insertamos espacios sintéticos en puntos probables
+      // 1) Sustituir grupos de '/' o '|' o '!' por espacios (por si alguna variante sobrevivió)
+      seg = seg.replace(/[\/_|!¡]+/g, ' ');
+      // 2) Insertar espacios alrededor de puntos y comas virtuales (no suelen estar en NS)
+      seg = seg.replace(/[,.;:]+/g, ' ');
+
+      // Heurística clave: probar cortes en 'I' como separador (la '/' suele leerse como 'I')
+      function pickTwoNamesFromCompact(compact){
+        const clean = compact.replace(/\s+/g,'');
+        let best = null;
+        // a) Primero, probar splits en posiciones donde hay 'I'
+        for (let j=1;j<clean.length-1;j++){
+          if (clean[j] !== 'I') continue;
+          const left = clean.slice(0,j);
+          const right = clean.slice(j+1);
+          const a = isNombre(left), b = isNombre(right);
+          if (a && a.ok && b && b.ok){
+            best = [left, right];
+            break;
+          }
         }
+        // b) Si no hubo éxito, probar todos los splits razonables (de 2..len-2)
+        if (!best){
+          for (let i=2;i<=clean.length-2;i++){
+            const left = clean.slice(0,i);
+            const right = clean.slice(i);
+            const a = isNombre(left);
+            if (!(a && a.ok)) continue;
+            // intenta que todo el right sea un nombre; si no, busca el prefijo más largo que sea nombre
+            let bestRight = null;
+            for (let k=right.length; k>=2; k--){
+              const cand = right.slice(0,k);
+              const b = isNombre(cand);
+              if (b && b.ok){ bestRight = cand; break; }
+            }
+            if (bestRight){
+              best = [left, bestRight];
+              break;
+            }
+          }
+        }
+        return best;
       }
 
-      if (chosen.length === 2){
-        padres = `${chosen[0]} y ${chosen[1]}`.trim();
+      const pair = pickTwoNamesFromCompact(seg);
+      if (pair){
+        padres = `${tcase(pair[0])} y ${tcase(pair[1])}`;
       } else {
-        // fallback: deja el texto limpio
-        padres = seg;
+        // Fallback: tokenizar por huecos sintéticos y escoger dos nombres válidos en secuencia
+        const tokens = seg.replace(/\s{2,}/g,' ').trim().split(/\s+/).filter(Boolean);
+        let chosen = [];
+        for (let i=0; i<tokens.length && chosen.length<2; i++){
+          const w = tokens[i];
+          const chk = isNombre(w);
+          if (chk && chk.ok) chosen.push(w);
+        }
+        padres = chosen.length===2 ? `${tcase(chosen[0])} y ${tcase(chosen[1])}` : seg;
       }
     }
   }

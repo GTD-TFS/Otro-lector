@@ -12,7 +12,18 @@
     }
     *{box-sizing:border-box}
     body{margin:0;padding:20px;font-family:system-ui,"Segoe UI",Arial;color:var(--fg);background:#0b1220}
-    h1{margin:0 0 14px;font-size:20px}
+    h1{
+      margin:0 0 14px;
+      font-size:28px;
+      line-height:1.1;
+      letter-spacing:.6px;
+      font-weight:700;
+      background:linear-gradient(92deg, #e6eefc, #8fc8ff 45%, #4da3ff 80%);
+      -webkit-background-clip:text;
+      background-clip:text;
+      color:transparent;
+      text-shadow:0 1px 0 rgba(0,0,0,.2);
+    }
     .grid{display:grid;gap:16px}
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
@@ -20,6 +31,13 @@
     .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
     .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
     .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
+    /* Broom button accent (orange) */
+    #clearForm{
+      border-color:#ff8c1a !important;
+      background:rgba(255,140,26,.08);
+    }
+    #clearForm:hover{ box-shadow:0 0 0 3px rgba(255,140,26,.18) inset; }
+    #clearForm:focus{ outline:2px solid rgba(255,140,26,.5); outline-offset:2px; }
     .fields{display:grid;gap:12px;grid-template-columns:1fr}
     @media(min-width:760px){.fields{grid-template-columns:1fr 1fr}}
     label{font-size:12px;margin-bottom:4px;color:#cfe0ff;display:block}
@@ -47,6 +65,7 @@
     <div class="row">
       <button class="btn" id="readAnalyze">Integrar filiación</button>
       <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT</button>
+      <button class="btn secondary broom" id="clearForm" title="Limpiar formulario">🧹</button>
       <div class="grow"></div>
     </div>
 
@@ -54,7 +73,6 @@
       <span class="badge">Filiaciones: <span id="countF">0</span></span>
       <ul class="list" id="listaF"></ul>
       <div class="grow"></div>
-      <button class="btn secondary" id="clearForm" title="Limpiar formulario">🧹</button>
     </div>
   </div>
 
@@ -131,7 +149,7 @@ function parseByRules(ocrRaw){
   const NS = noSpace(raw);
 
   // Encabezados tolerantes (comparación sin espacios)
-  const RX_DOM_NS  = /D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q]/;
+  const RX_DOM_NS  = /^D[O0Q]M[IL1]C[ÇC][IL1][L1I][IO0Q]$/;
   const RX_LNAC_NS = /L[UÜV][G6][A4]RDE?N[ A]*A?C[IM1][IM1][E3][MN][T7][O0]/;
   const RX_HIJO_NS = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
 
@@ -150,7 +168,7 @@ function parseByRules(ocrRaw){
   // DOMICILIO: desde DOM hasta LUGAR o EQUIPO
   let domicilio = "";
   if (idxDOM !== -1){
-    const end = [idxLUG, idxEQUIPO].filter(i=>i>-1).sort((a,b)=>a-b)[0];
+    const end = [idxLUG, idxEQUIPO].filter(i=>i>-1 && i>idxDOM).sort((a,b)=>a-b)[0];
     const stop = (end !== undefined) ? end : lines.length;
     let parts = [];
     for (let i=idxDOM+1; i<stop; i++){
@@ -170,9 +188,10 @@ function parseByRules(ocrRaw){
     const looksAddr = s => /^(C\.|C\/|CALLE|AV(DA)?|AVENIDA|CTRA|CARRETERA|PLAZA|PZA|PASEO|PSO|CAMINO|CMNO|URB|VIA)\b/i.test(s||"");
     const start = lines.findIndex(looksAddr);
     if (start !== -1){
-      const stop = [idxLUG, idxHIJO, idxEQUIPO].filter(i=>i>-1).sort((a,b)=>a-b)[0];
+      const stop = [idxLUG, idxHIJO, idxEQUIPO].filter(i=>i>-1 && i>start).sort((a,b)=>a-b)[0];
       let parts = [];
-      for (let i=start; i<(stop ?? lines.length); i++){
+      const limit = (stop ?? lines.length);
+      for (let i=start; i<limit; i++){
         if (U[i] === 'EQUIPO'){
           const nxt = lines[i+1] || "";
           const nxtU = U[i+1] || "";
@@ -439,12 +458,10 @@ function clearFormOnly(){
   const ta = document.getElementById('Doc');
   if (ta) ta.value = "";
 
-  // 3) Resetear expediente completo (memoria)
-  expediente.doc = "";
-  expediente.filiaciones = [];
+  // 3) Mantener la memoria (expediente) intacta: solo limpiar UI
 
-  // 4) Refrescar contador y lista visible
-  updateCount(); // esto también vuelve a pintar la lista
+  // 4) Refrescar contador y lista visible (no cambia la memoria)
+  updateCount();
 
   // 5) Refrescar validaciones
   validateAll();

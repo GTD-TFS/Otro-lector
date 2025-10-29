@@ -167,47 +167,33 @@
 </div>
 
 <script>
+// ======================================================
+// FILIATRON — PARSER NS (1 sola línea, sin espacios)
+// ======================================================
+
 const expediente = { doc: "", filiaciones: [] };
 
-const toLines = (txt) => (txt || "")
-  .split(/\r?\n/)
-  .map(s => s.trim())
-  .filter(s => s.length > 0);
-
+// ---------- Helpers texto ----------
 const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
-const ucase = s => (s||"").toUpperCase();
 const normalize = s => (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-const noSpace = s => normalize(s).replace(/\s+/g,'');
+const normAZ = s => (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+  .replace(/[^A-ZÑÁÉÍÓÚÜ\s-]/g,'').replace(/\s+/g,' ').trim();
 
-// --- MUNICIPIOS: loader + matcher (JSON externo con fallback embebido) ------
-const MUNICIPIOS_EMBED = [
-  "MADRID","BARCELONA","VALENCIA","SEVILLA","ZARAGOZA","MALAGA","MURCIA",
-  "PALMA","BILBAO","LAS PALMAS DE GRAN CANARIA","SANTA CRUZ DE TENERIFE",
-  "SAN CRISTOBAL DE LA LAGUNA","TELDE","ARRECIFE","ARONA","ADEJE","GRANADILLA DE ABONA",
-  "PUERTO DE LA CRUZ","LA OROTAVA","SANTA LUCIA DE TIRAJANA","ARUCAS","AGUIMES","MOYA","ICOD DE LOS VINOS",
-  "LA LAGUNA","LAS PALMAS","SANTA CRUZ"
-];
-let MUNICIPIOS_SET = new Set(MUNICIPIOS_EMBED.map(x => normalize(String(x))));
-let MUNICIPIOS_NOSPACE_MAP = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
-
-async function initMunicipios(){
-  try{
-    const res = await fetch('municipios.json');
-    if (!res.ok) return; // embed si falla
-    const arr = await res.json();
-    if (Array.isArray(arr)) {
-      MUNICIPIOS_SET = new Set(arr.map(x => normalize(String(x))));
-      MUNICIPIOS_NOSPACE_MAP = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
-    }
-  }catch{/* offline: usar embed */}
+// Construye NS (sin espacios) y mapa de índices a RAW
+function buildNS(raw){
+  const up0 = normalize(raw||"");
+// Normaliza variantes OCR del separador MRZ "<" (japonés 'く' y full-width '＜')
+  const up = up0.replace(/く/g,'<').replace(/＜/g,'<');
+  let NS = ""; const MAP = [];
+  for (let i=0;i<up.length;i++){
+    const ch = up[i];
+    if (/\s/.test(ch)) continue;
+    NS += ch; MAP.push(i);
+  }
+  return { NS, MAP, RAW: raw||"", UPROW: up };
 }
 
-function normTextAtoZ(s){
-  return (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
-    .replace(/[^A-ZÑÁÉÍÓÚÜ\s-]/g,'').replace(/\s+/g,' ').trim();
-}
-
-// Distancia de edición (Damerau-Levenshtein) limitada a 2
+// ---------- Distancia (fuzzy) ----------
 function damerauLevenshtein(a,b,limit=2){
   a=a||""; b=b||""; if(a===b) return 0; if(!a||!b) return Math.min(limit+1, Math.max(a.length,b.length));
   const al=a.length, bl=b.length; if (Math.abs(al-bl)>limit) return limit+1;
@@ -226,39 +212,15 @@ function damerauLevenshtein(a,b,limit=2){
   return dp[al][bl];
 }
 
-function matchMunicipio(raw){
-  if (!MUNICIPIOS_SET || typeof MUNICIPIOS_SET.size==='undefined'){
-    return {canon:normTextAtoZ(raw||''), approx:false, found:false};
-  }
-  if (!raw) return {canon:"", approx:false, found:false};
-  const cand = normTextAtoZ(raw);
-  const can  = normalize(cand);
-  if (!MUNICIPIOS_SET.size) return {canon:cand, approx:false, found:false};
-  if (MUNICIPIOS_SET.has(can)) return {canon:cand, approx:false, found:true};
-  let best=null, bestD=3;
-  for (const m of MUNICIPIOS_SET){
-    const d = damerauLevenshtein(can, m, 2);
-    if (d<bestD){ bestD=d; best=m; if (d===0) break; }
-  }
-  if (best!=null && bestD<=2){
-    return {canon: best.replace(/\s+/g,' ').trim(), approx:true, found:true};
-  }
-  return {canon:cand, approx:false, found:false};
-}
+// ---------- Librerías (municipios / provincias / nombres) ----------
+let MUNICIPIOS_SET = new Set([
+  // Fallback mínimo (por si fetch falla en file://)
+  "MADRID","ALCOBENDAS","BARCELONA","VALENCIA","SEVILLA","MALAGA","MURCIA",
+  "SANTA CRUZ DE TENERIFE","LAS PALMAS","ARONA","ADEJE","TELDE","VIGO","OVIEDO","GIJON","BILBAO","VALLADOLID","SALAMANCA","TOLEDO"
+].map(normalize));
 
-function matchMunicipioSuffixNS(ns){
-  if (!ns) return null;
-  if (!MUNICIPIOS_NOSPACE_MAP || !MUNICIPIOS_NOSPACE_MAP.size) return null;
-  const maxLen = Math.min(32, ns.length);
-  for (let len = maxLen; len >= 5; len--) {
-    const sub = ns.slice(ns.length - len);
-    const hit = MUNICIPIOS_NOSPACE_MAP.get(sub);
-    if (hit) return { canon: hit, index: ns.length - len };
-  }
-  return null;
-}
-// ---------------------------------------------------------------------------
-// --- PROVINCIAS: set y mapa sin espacios -----------------------------------
+let MUNICIPIOS_NOSPACE = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
+
 const PROVINCIAS = [
   "A CORUÑA","ÁLAVA","ALAVA","ALBACETE","ALICANTE","ALMERÍA","ALMERIA","ASTURIAS","ÁVILA","AVILA",
   "BADAJOZ","BARCELONA","BIZKAIA","VIZCAYA","BURGOS","CÁCERES","CACERES","CÁDIZ","CADIZ","CANTABRIA",
@@ -268,16 +230,58 @@ const PROVINCIAS = [
   "MURCIA","NAVARRA","NAFARROA","OURENSE","ORENSE","PALENCIA","PONTEVEDRA","SALAMANCA",
   "SANTA CRUZ DE TENERIFE","SEGOVIA","SEVILLA","SORIA","TARRAGONA","TERUEL","TOLEDO",
   "VALENCIA","VALLADOLID","ZAMORA","ZARAGOZA","CEUTA","MELILLA"
-].map(x => normalize(x));
+].map(normalize);
+const PROV_SET = new Set(PROVINCIAS);
+const PROV_NOSPACE = new Map([...PROV_SET].map(p => [p.replace(/\s+/g,''), p]));
 
-let PROVINCIAS_SET = new Set(PROVINCIAS);
-let PROVINCIAS_NOSPACE = new Map([...PROVINCIAS_SET].map(p => [p.replace(/\s+/g,''), p]));
+let NOMBRES_SET = new Set(); // se cargará de nombres.json si se puede
 
-// Devuelve la PRIMERA provincia que aparece en la cadena sin espacios `ns` a partir de `start`
+async function initMunicipios(){
+  try{
+    const res = await fetch('municipios.json', {cache:'no-store'});
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const arr = await res.json();
+    if (Array.isArray(arr) && arr.length){
+      MUNICIPIOS_SET = new Set(arr.map(x => normalize(String(x))));
+      MUNICIPIOS_NOSPACE = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
+      console.log(`Municipios cargados: ${MUNICIPIOS_SET.size}`);
+    }
+  }catch(e){
+    console.warn('municipios.json no accesible (¿file:// / CORS?). Uso fallback.', e);
+  }
+}
+async function initNombres(){
+  try{
+    const res = await fetch('nombres.json', {cache:'no-store'});
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const arr = await res.json();
+    if (Array.isArray(arr) && arr.length){
+      // nombres.json tiene líneas tipo "AARON,21540,11.0" o nombres compuestos
+      // extrae solo el campo de nombre (antes de la primera coma)
+      const list = arr.map(line => String(line).split(',')[0]).filter(Boolean);
+      NOMBRES_SET = new Set(list.map(normalize));
+      console.log(`Nombres cargados: ${NOMBRES_SET.size}`);
+    }
+  }catch(e){
+    console.warn('nombres.json no accesible (¿file:// / CORS?). Padres quedarán en duda si no hay set.', e);
+  }
+}
+
+// ---------- Matching municipio / provincia ----------
+function matchMunicipioSuffixNS(ns){
+  if (!ns || !MUNICIPIOS_NOSPACE.size) return null;
+  const maxLen = Math.min(32, ns.length);
+  for (let len = maxLen; len >= 4; len--) {
+    const sub = ns.slice(ns.length - len);
+    const hit = MUNICIPIOS_NOSPACE.get(sub);
+    if (hit) return { canon: hit, index: ns.length - len };
+  }
+  return null;
+}
 function findProvinceAfter(ns, start=0){
-  if (!ns || !PROVINCIAS_NOSPACE.size) return null;
+  if (!ns) return null;
   let best = null;
-  for (const [pNS, canon] of PROVINCIAS_NOSPACE.entries()){
+  for (const [pNS, canon] of PROV_NOSPACE.entries()){
     const idx = ns.indexOf(pNS, start);
     if (idx !== -1){
       if (!best || idx < best.index || (idx === best.index && pNS.length > best.pNS.length)){
@@ -285,476 +289,287 @@ function findProvinceAfter(ns, start=0){
       }
     }
   }
-  return best; // {index, canon, pNS} o null
+  return best;
 }
-// ---------------------------------------------------------------------------
-
-// --- NOMBRES: loader + validador (SOLO JSON externo, sin embed) -------------
-let NOMBRES_SET = new Set();
-
-async function initNombres(){
-  try{
-    const res = await fetch('nombres.json');
-    if (!res.ok) return; // si no está, no valida pero no rompe
-    const arr = await res.json();
-    if (Array.isArray(arr)) {
-      NOMBRES_SET = new Set(arr.map(x=>normalize(String(x))));
-    }
-  }catch{/* offline: sin nombres */}
-}
-
-function isNombre(raw){
-  const tok = normalize(normTextAtoZ(raw));
-  if (!tok) return {ok:false, approx:false};
-  if (!NOMBRES_SET || !NOMBRES_SET.size) return {ok:false, approx:false};
-  if (NOMBRES_SET.has(tok)) return {ok:true, approx:false};
-  const limit = tok.length<=6 ? 1 : 2;
-  let bestD=limit+1;
-  for (const n of NOMBRES_SET){
-    const d = damerauLevenshtein(tok, n, limit);
-    if (d<bestD){ bestD=d; if (d===0) break; }
+function matchMunicipio(raw){
+  const cand = normAZ(raw);
+  const can  = normalize(cand);
+  if (MUNICIPIOS_SET.has(can)) return {canon:cand, approx:false, found:true};
+  let best=null, bestD=3;
+  for (const m of MUNICIPIOS_SET){
+    const d = damerauLevenshtein(can, m, 2);
+    if (d<bestD){ bestD=d; best=m; if (d===0) break; }
   }
-  return {ok: bestD<=limit, approx: bestD<=limit};
-}
-// ---------------------------------------------------------------------------
-
-async function readFromClipboard(){
-  try{
-    const txt = await navigator.clipboard.readText();
-    return txt || "";
-  }catch{
-    const m = prompt("Pega manualmente el texto:");
-    return m || "";
-  }
+  if (best!=null && bestD<=2) return {canon: best.replace(/\s+/g,' ').trim(), approx:true, found:true};
+  return {canon:cand, approx:false, found:false};
 }
 
+// ---------- MRZ helpers ----------
+function mapDigit(ch){
+  if (/[0-9]/.test(ch)) return ch;
+  const t = ch.toUpperCase();
+  if (t==='O'||t==='Q') return '0';
+  if (t==='I'||t==='L') return '1';
+  if (t==='Z') return '2';
+  if (t==='S') return '5';
+  if (t==='B') return '8';
+  return '0';
+}
+
+// ---------- Parser principal (NS) ----------
 function parseByRules(ocrRaw){
-  // Normalización de detección: mayúsculas sin tildes + SIN ESPACIOS → única cadena NS
-  const raw = ocrRaw || "";
-  const lines = toLines(raw);
-  const U = lines.map(normalize);
-  const upRaw = normalize(raw);
-  let NS = '';
-  const NS_MAP = [];
-  for (let i = 0; i < upRaw.length; i++){
-    const ch = upRaw[i];
-    if (/\s/.test(ch)) continue; // quitamos espacios
-    NS += ch;
-    NS_MAP.push(i); // posición correspondiente en raw/upRaw
-  }
-
-  // Encabezados tolerantes (comparación sin espacios)
-  const RX_DOM_NS  = /^D[O0Q]M[IL1]C[ÇC][IL1][L1I][IO0Q]$/;
-  const RX_LNAC_NS = /L[UÜV][G6][A4]RDE?N[ A]*A?C[IM1][IM1][E3][MN][T7][O0]/;
-  const RX_HIJO_NS = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
-
-  const findHeaderLine = (rxNS) => {
-    for (let i=0;i<U.length;i++){
-      if (rxNS.test(noSpace(U[i]))) return i;
-    }
-    return -1;
-  };
-
-  const idxDOM  = findHeaderLine(RX_DOM_NS);
-  const idxLUG  = findHeaderLine(RX_LNAC_NS);
-  const idxHIJO = findHeaderLine(RX_HIJO_NS);
-  const idxEQUIPO = U.findIndex(s => s.trim() === 'EQUIPO');
-
-  // --- Anclajes globales para zonas (usados por LUGAR y PADRES)
-  const S_ALL = NS; // alias
-  const gStopIDESP = S_ALL.indexOf('IDESP');
-  const gStopIOESP = S_ALL.indexOf('IOESP');
-  const gStopLT    = S_ALL.indexOf('<');
-  const gStopEQ    = S_ALL.indexOf('EQUIPO');
-  const gStopsArr  = [gStopIDESP, gStopIOESP, gStopLT, gStopEQ].filter(i=>i!==-1);
-  const gStop      = gStopsArr.length ? Math.min(...gStopsArr) : S_ALL.length;
-  // Regla base PADRES: buscar el "DE" inmediatamente previo al bloque MRZ/EQUIPO
-  const gParentsDE = (function(){
-    const winStart = Math.max(0, gStop - 16); // ventana corta para capturar "...ADE"
-    const pos = S_ALL.lastIndexOf('DE', gStop);
-    return (pos >= winStart && pos !== -1) ? pos : -1;
-  })();
-
-  // DOMICILIO: desde "DOMICILIO" hasta provincia o anclaje siguiente
-  let domicilio = ""; let domicilioUncertain = true;
-  {
-    const s = NS;
-    const key = 'DOMICILIO';
-    const iDom = s.indexOf(key);
-    if (iDom !== -1){
-      const start = iDom + key.length;
-      const a1 = s.indexOf('LUGARDENACIMIENTO', start);
-      const a1b = s.indexOf('LAGARDENACIMIENTO', start);
-      const a2 = s.indexOf('EQUIPO', start);
-      const a3 = s.indexOf('HIJO/ADE', start);
-      const a3b = s.indexOf('HIJOADE', start);
-      const a4 = s.indexOf('IDESP', start);
-      const a5 = s.indexOf('IOESP', start);
-      const a6 = s.indexOf('<', start);
-      const candidates = [a1,a1b,a2,a3,a3b,a4,a5,a6].filter(i=>i!==-1);
-      const pv = findProvinceAfter(s, start);
-      const anchorEnd = candidates.length ? Math.min(...candidates) : s.length;
-      const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
-
-      let domNS = s.slice(start, end).trim();
-      const suf = matchMunicipioSuffixNS(domNS);
-      if (suf) {
-        const nsStart = start;
-        const nsEndStreet = start + suf.index; // fin de la calle dentro de NS
-        const rawStart = NS_MAP[nsStart] ?? 0;
-        const rawEndStreet = (NS_MAP[nsEndStreet-1] ?? NS_MAP[NS_MAP.length-1]) + 1;
-        let streetRaw = raw.slice(rawStart, rawEndStreet);
-        streetRaw = streetRaw
-          .replace(/\s*,\s*/g, ', ')
-          .replace(/\.([A-Za-zÁÉÍÓÚÜÑ])/g, '. $1')
-          .replace(/([A-Za-zÁÉÍÓÚÜÑ])(\d)/g, '$1 $2')
-          .replace(/(\d)([A-Za-zÁÉÍÓÚÜÑ])/g, '$1 $2')
-          .replace(/\s{2,}/g,' ')
-          .trim();
-        domicilio = streetRaw + ', ' + suf.canon;
-        domicilioUncertain = false;
-      } else {
-        // sin municipio detectable: devolver el trozo original con espaciado mínimo (en duda)
-        const rawStart = NS_MAP[start] ?? 0;
-        const rawEnd = (NS_MAP[end-1] ?? NS_MAP[NS_MAP.length-1]) + 1;
-        let streetRaw = raw.slice(rawStart, rawEnd)
-          .replace(/\s*,\s*/g, ', ')
-          .replace(/\.([A-Za-zÁÉÍÓÚÜÑ])/g, '. $1')
-          .replace(/\s{2,}/g,' ')
-          .trim();
-        domicilio = streetRaw;
-      }
-    }
-  }
-
-  // LUGAR DE NACIMIENTO: tras LUGARDENACIMIENTO/LAGARDENACIMIENTO hasta provincia o DE (padres)
-  let lugarNac = ""; let lugarUncertain = true;
-  {
-    const s = NS;
-    const keys = ['LUGARDENACIMIENTO','LAGARDENACIMIENTO'];
-    let iLug = -1, k = '';
-    for (const kk of keys){ const ii = s.indexOf(kk); if (ii!==-1){ iLug=ii; k=kk; break; } }
-    if (iLug !== -1){
-      const start = iLug + k.length;
-      const a1 = s.indexOf('HIJO/ADE', start);
-      const a1b = s.indexOf('HIJOADE', start);
-      const a2 = s.indexOf('IDESP', start);
-      const a3 = s.indexOf('IOESP', start);
-      const a4 = s.indexOf('<', start);
-      const a5 = s.indexOf('DOMICILIO', start);
-      const a6 = s.indexOf('EQUIPO', start);
-      const candidates = [a1,a1b,a2,a3,a4,a5,a6].filter(i=>i!==-1);
-      const pv = findProvinceAfter(s, start);
-      const anchorEnd = candidates.length ? Math.min(...candidates) : s.length;
-      const parentsLimit = (gParentsDE !== -1 && gParentsDE > start) ? gParentsDE : Infinity;
-      const hardEnd = Math.min(anchorEnd, parentsLimit);
-      const end = (pv && pv.index < hardEnd) ? pv.index : hardEnd;
-
-      let seg = s.slice(start, end);
-
-      // corta números basura si se colaron
-      const cutNum = seg.search(/[0-9]/);
-      if (cutNum !== -1) seg = seg.slice(0, cutNum);
-
-      const rawMunNS = seg.trim();                 // municipio en NS (pegado)
-      const munMatch = matchMunicipio(rawMunNS);   // intenta canonizar municipio
-
-      if (pv){ // hay provincia detectada
-        // con provincia detectada bajamos incertidumbre
-        lugarUncertain = false;
-
-        const provCanon = tcase(pv.canon);
-        const munCanon = munMatch.found ? tcase(munMatch.canon) : tcase(rawMunNS);
-
-        if (!rawMunNS || normalize(munCanon) === normalize(pv.canon)){
-          // Caso MADRIDMADRID o municipio vacío: no duplicar
-          lugarNac = provCanon;
-        } else {
-          // Caso ALCOBENDASMADRID: mapea "Alcobendas, Madrid"
-          lugarNac = `${munCanon}, ${provCanon}`;
-        }
-      } else {
-        // Sin provincia detectada: comportamiento previo + mantiene incertidumbre salvo match exacto
-        const rawLoc = rawMunNS;
-        const mloc = matchMunicipio(rawLoc);
-        lugarNac = mloc.found ? tcase(mloc.canon) : tcase(rawLoc);
-        if (!(mloc && mloc.found && !mloc.approx)) lugarUncertain = true;
-      }
-    }
-  }
-
-  // PADRES (NS): desde el 'DE' inmediatamente anterior a IDESP/IOESP/< o EQUIPO hasta stop
-let padres = ""; 
-let padresUncertain = true;
+  // --- construir NS y, si empieza por EQUIPO, recortar hasta DOMICILIO ---
 {
-  const s = NS;
-  const stop = gStop; // hasta IDESP/IOESP/< o EQUIPO
-  let start = -1;
-  // (elimina la línea `let padresUncertain = true;` aquí)
+  const built = buildNS(ocrRaw);
+  let NS0 = built.NS, MAP0 = built.MAP, RAW0 = built.RAW;
 
-    // Regla base: usar el "DE" detectado justo antes del bloque MRZ/EQUIPO
-    if (gParentsDE !== -1) start = gParentsDE + 2; // tras 'DE'
-
-    // Si no hay gParentsDE, intenta regex de HIJO/ADE como respaldo
-    if (start === -1){
-      const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
-      const mH = rxHijo.exec(s);
-      if (mH && (mH.index + mH[0].length) < stop){
-        start = mH.index + mH[0].length;
-      }
+  // Si la cadena NS empieza con EQUIPO... eliminar "EQUIPO" + alfanumérico hasta "DOMICILIO"
+  if (NS0.startsWith('EQUIPO')) {
+    const idxDomStart = NS0.indexOf('DOMICILIO');
+    if (idxDomStart !== -1) {
+      NS0  = NS0.slice(idxDomStart);
+      MAP0 = MAP0.slice(idxDomStart); // mantiene alineado el mapeo RAW
     }
+  }
 
-    if (start !== -1 && start < stop){
-      let seg = s.slice(start, stop);
-      // eliminar números colados
-      const cutNum = seg.search(/[0-9]/);
-      if (cutNum !== -1) seg = seg.slice(0, cutNum);
+  // Exponer a la función con los mismos nombres que usas abajo
+  var NS = NS0, MAP = MAP0, RAW = RAW0;
+}
 
-      // limpiar separadores “OCR”
-      seg = seg.replace(/[\/_|!¡]+/g, ' ').replace(/[,.;:]+/g, ' ');
+  // Anclajes
+  const idxIDESP = NS.indexOf('IDESP') !== -1 ? NS.indexOf('IDESP') : NS.indexOf('IOESP');
+  const idxEQUIPO = NS.indexOf('EQUIPO');
+  const idxDOM = NS.indexOf('DOMICILIO');
+  const idxLUG = (()=>{ const a=NS.indexOf('LUGARDENACIMIENTO'); if (a!==-1) return a; return NS.indexOf('LAGARDENACIMIENTO');})();
+  const gStop = [idxIDESP, idxEQUIPO].filter(i=>i!==-1).reduce((m,i)=>Math.min(m,i), NS.length);
 
-      // Heurística clave: probar cortes en 'I' como separador (la '/' suele leerse como 'I')
-      function pickTwoNamesFromCompact(compact){
-        const clean = compact.replace(/\s+/g,'');
-        let best = null;
-        // a) Primero, splits en 'I'
-        for (let j=1;j<clean.length-1;j++){
-          if (clean[j] !== 'I') continue;
-          const left = clean.slice(0,j);
-          const right = clean.slice(j+1);
-          const a = isNombre(left), b = isNombre(right);
-          if (a && a.ok && b && b.ok){
-            best = [left, right];
-            break;
+  // --- DOMICILIO ---
+  let domicilio = "", domicilioUncertain = true;
+  if (idxDOM !== -1){
+    const start = idxDOM + 'DOMICILIO'.length;
+    const aLUG = idxLUG === -1 ? Infinity : idxLUG;
+    const aEQ  = idxEQUIPO === -1 ? Infinity : idxEQUIPO;
+    const aID  = idxIDESP === -1 ? Infinity : idxIDESP;
+    const pv   = findProvinceAfter(NS, start);
+    const anchorEnd = Math.min(aLUG, aEQ, aID, NS.length);
+    const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
+
+    let domNS = NS.slice(start, end).trim();
+    const suf = matchMunicipioSuffixNS(domNS);
+
+    // reconstruir calle legible
+    const rawStart = MAP[start] ?? 0;
+    const rawEndStreet = (suf ? MAP[start + suf.index - 1] : MAP[end - 1]) ?? MAP[MAP.length-1];
+    let street = RAW.slice(rawStart, (rawEndStreet ?? rawStart)+1)
+      .replace(/\s*,\s*/g, ', ')
+      .replace(/\.([A-Za-zÁÉÍÓÚÜÑ])/g, '. $1')
+      .replace(/([A-Za-zÁÉÍÓÚÜÑ])(\d)/g, '$1 $2')
+      .replace(/(\d)([A-Za-zÁÉÍÓÚÜÑ])/g, '$1 $2')
+      .replace(/\s{2,}/g,' ')
+      .trim();
+
+    if (suf){
+      domicilio = `${street}, ${tcase(suf.canon)}`;
+      domicilioUncertain = false;
+    } else {
+      domicilio = street;
+    }
+  }
+
+  // --- LUGAR NACIMIENTO ---
+  let lugarNac = "", lugarUncertain = true;
+  if (idxLUG !== -1){
+    const start = idxLUG + (NS.startsWith('LUGARDENACIMIENTO', idxLUG) ? 'LUGARDENACIMIENTO'.length : 'LAGARDENACIMIENTO'.length);
+    const aH  = (()=>{ const i=NS.indexOf('HIJOADE', start); return i!==-1?i:Infinity;})();
+    const aID = idxIDESP !== -1 ? idxIDESP : Infinity;
+    const aEQ = idxEQUIPO !== -1 ? idxEQUIPO : Infinity;
+    const pv  = findProvinceAfter(NS, start);
+    // no invadir el "DE" de padres
+    const idxH = NS.indexOf('HIJOADE', start);
+    const limitDE = (idxH!==-1) ? (NS.indexOf('DE', idxH+'HIJOADE'.length) || Infinity) : Infinity;
+
+    const anchorEnd = Math.min(aH, aID, aEQ, NS.length, limitDE);
+    const end = (pv && pv.index < anchorEnd) ? pv.index : anchorEnd;
+
+    let seg = NS.slice(start, end);
+    const cutNum = seg.search(/[0-9]/); if (cutNum !== -1) seg = seg.slice(0, cutNum);
+
+    const mun = matchMunicipio(seg);
+    if (pv){
+      const prov = tcase(pv.canon);
+      const mc = mun.found ? tcase(mun.canon) : tcase(seg);
+      lugarUncertain = false;
+      lugarNac = (!seg || normalize(mc)===normalize(pv.canon)) ? prov : `${mc}, ${prov}`;
+    }else{
+      lugarNac = mun.found ? tcase(mun.canon) : tcase(seg);
+      if (!(mun.found && !mun.approx)) lugarUncertain = true;
+    }
+  }
+
+  // --- PADRES (HIJO/ADE → DE → IDESP) ---
+let padres = "", padresUncertain = true;
+{
+  const iH = (()=>{ 
+    const base = NS.indexOf('HIJOADE');
+    if (base!==-1) return base;
+    const alts = ['HUDIADE','NUOIADE','HLJOADE'];
+    for (const a of alts){ const i=NS.indexOf(a); if (i!==-1) return i; }
+    return -1;
+  })();
+  if (iH !== -1){
+    const iDE = NS.indexOf('DE', iH + 'HIJOADE'.length);
+    const end = (idxIDESP!==-1) ? idxIDESP : NS.length;
+    if (iDE!==-1 && iDE<end){
+      let seg = NS.slice(iDE + 2, end); // tras "DE"
+      seg = seg.replace(/[0-9]+/g,'');  // nunca números en nombres
+
+      // intenta separar por 'I' (OCR de "/") si da 2 nombres válidos
+      const tryISeps = () => {
+        for (let j=1;j<seg.length-1;j++){
+          if (seg[j] !== 'I') continue;
+          const left = seg.slice(0,j), right = seg.slice(j+1);
+          if (isNombre(left).ok && isNombre(right).ok) return [left,right];
+        }
+        return null;
+      };
+
+      // fallback: probar cortes generales buscando 2 nombres válidos
+      const tryGeneralSplit = () => {
+        const clean = seg.replace(/[\/_|!¡]+/g,' ');
+        const tokens = clean.split(/\s+/).filter(Boolean);
+        // Si tokens no sirven, probar cortes por longitudes
+        let chosen=null;
+        // (1) tokens → parejas válidas
+        for (let a=0;a<tokens.length;a++){
+          for (let b=a+1;b<tokens.length;b++){
+            const A=tokens[a], B=tokens[b];
+            if (isNombre(A).ok && isNombre(B).ok){ chosen=[A,B]; break; }
+          }
+          if (chosen) break;
+        }
+        // (2) por longitud si sigue sin salir
+        if (!chosen){
+          const c = seg.replace(/[\/_|!¡]+/g,'');
+          for (let k=2;k<=Math.min(12,c.length-2);k++){
+            const A=c.slice(0,k), B=c.slice(k);
+            if (isNombre(A).ok && isNombre(B).ok){ chosen=[A,B]; break; }
           }
         }
-        // b) Si no hubo éxito, probar splits generales buscando dos nombres válidos
-        if (!best){
-          for (let i=2;i<=clean.length-2;i++){
-            const left = clean.slice(0,i);
-            const right = clean.slice(i);
-            const a = isNombre(left);
-            if (!(a && a.ok)) continue;
-            let bestRight = null;
-            for (let k=right.length; k>=2; k--){
-              const cand = right.slice(0,k);
-              const b = isNombre(cand);
-              if (b && b.ok){ bestRight = cand; break; }
-            }
-            if (bestRight){
-              best = [left, bestRight];
-              break;
-            }
-          }
-        }
-        return best;
-      }
+        return chosen;
+      };
 
-      const pair = pickTwoNamesFromCompact(seg);
+      let pair = tryISeps();
+      if (!pair) pair = tryGeneralSplit();
+
       if (pair){
-        padresUncertain = false; // separación clara por 'I' o split válido
         padres = `${tcase(pair[0])} y ${tcase(pair[1])}`;
-      } else {
-        // Fallback mejorado: separar posibles compuestos pegados (p.ej. JOSELUIS)
-        const rawTokens = seg.replace(/\s{2,}/g,' ').trim().split(/\s+/).filter(Boolean);
-        function splitTwoNamesIfPossible(tok){
-          const t = tok.replace(/[^A-ZÁÉÍÓÚÜÑ]/g,'');
-          for (let i=2; i<=t.length-2; i++){
-            const a = t.slice(0,i), b = t.slice(i);
-            const ca = isNombre(a), cb = isNombre(b);
-            if (ca && ca.ok && cb && cb.ok) return [a,b];
-          }
-          return null;
+        padresUncertain = false;
+      }else{
+        // como último recurso, conserva lo legible
+        padres = tcase(normAZ(seg));
+        padresUncertain = true;
+      }
+
+      // filtra si por error son municipios/provincias
+      const parts = padres.split(/\s+y\s+/i);
+      if (parts.length===2){
+        const badA = PROV_SET.has(normalize(parts[0])) || MUNICIPIOS_SET.has(normalize(parts[0]));
+        const badB = PROV_SET.has(normalize(parts[1])) || MUNICIPIOS_SET.has(normalize(parts[1]));
+        if (badA || badB) padresUncertain = true;
+      }
+    }
+  }
+}
+
+  // --- MRZ (L1/L2/L3) con tolerancia ---
+  let MRZ_L1="", MRZ_L2="", MRZ_L3="";
+  if (idxIDESP !== -1){
+    const g1 = NS.indexOf('<<<', idxIDESP);
+    if (g1 !== -1){
+      MRZ_L1 = NS.slice(idxIDESP, g1);
+      // busca ventana para L2 (no dependas estrictamente de g2)
+      const afterESP = NS.indexOf('ESP', g1);
+      if (afterESP !== -1){
+        // ventana razonable tras ESP
+        const win = NS.slice(g1+3, Math.min(NS.length, afterESP + 90));
+        const m = win.match(/([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
+        if (m) MRZ_L2 = m[0];
+        // L3: segundo "<<<" tras ESP, luego letras
+        const gg1 = NS.indexOf('<<<', afterESP+3);
+        const gg2 = NS.indexOf('<<<', gg1+3);
+        if (gg1 !== -1 && gg2 !== -1){
+          let s = gg2 + 3;
+          while (s < NS.length && !/[A-ZÑ<]/.test(NS[s])) s++;
+          MRZ_L3 = NS.slice(s);
         }
-        const tokens = [];
-        for (const t of rawTokens){
-          const split = splitTwoNamesIfPossible(t);
-          if (split) tokens.push(...split); else tokens.push(t);
-        }
-        let chosen = [];
-        for (let i=0; i<tokens.length && chosen.length<2; i++){
-          const w = tokens[i];
-          const chk = isNombre(w);
-          if (chk && chk.ok) chosen.push(w);
-        }
-        padres = chosen.length===2 ? `${tcase(chosen[0])} y ${tcase(chosen[1])}` : seg;
       }
     }
   }
 
-  // MRZ con separadores (método tradicional basado en “líneas” del raw)
-  function detectMRZ(upperLines){
-    const isSeparator = (s)=> /^([<\s0-9]){3,}$/.test((s||""));
-    const clean = (s)=> (s||"").replace(/\s+/g,'').toUpperCase();
-    const arr = upperLines.filter(s => s && s.trim() && !isSeparator(s));
-
-    for(let i=0;i<arr.length;i++){
-      const s = arr[i];
-      if (/^I[DO]ESP/.test(s)){
-        const l1 = clean(s), l2 = clean(arr[i+1]||""), l3 = clean(arr[i+2]||"");
-        return [l1,l2,l3];
-      }
-    }
-    const l2Pattern = /^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/;
-    for(let j=0;j<arr.length;j++){
-      const s = clean(arr[j]);
-      if (l2Pattern.test(s)){
-        const l1 = clean(arr[j-1]||""), l2 = s, l3 = clean(arr[j+1]||"");
-        return [l1,l2,l3];
-      }
-    }
-    const withAngles = arr.filter(s => (s||"").includes("<"));
-    if (withAngles.length >= 3) return withAngles.slice(-3).map(clean);
-    const last3Any = arr.slice(-3).map(clean);
-    while (last3Any.length < 3) last3Any.unshift("");
-    return last3Any;
-  }
-
-  // Fallback MRZ L3 desde NS (una sola línea): ESP → segundo “<<<” → L3
-  function detectMRZ_L3_fromNS(ns){
-    if(!ns) return "";
-    const s = ns;
-    const idxESP = s.indexOf("ESP");
-    if (idxESP === -1) return "";
-    const g1 = s.indexOf("<<<", idxESP + 3);
-    if (g1 === -1) return "";
-    const g2 = s.indexOf("<<<", g1 + 3);
-    if (g2 === -1) return "";
-    let start = g2 + 3;
-    while (start < s.length && !/[A-ZÑ]/.test(s[start])) start++; // salta '0' u otros
-    return s.slice(start);
-  }
-
-  // Obtener MRZ (L1/L2 desde método tradicional; L3 desde NS si falta)
-  let [MRZ_L1, MRZ_L2, MRZ_L3] = detectMRZ(U);
-  let mrzL3FromNS = false;
-  if (!MRZ_L3 || MRZ_L3.length < 5){
-    const l3ns = detectMRZ_L3_fromNS(NS);
-    if (l3ns){ MRZ_L3 = l3ns; mrzL3FromNS = true; }
-  }
-
-  // Nacionalidad
-  function isSpainFromL1(l1){
-    const norm = l1.replace(/[1lİＩ]/g,'I').replace(/[5Ｓ]/g,'S').replace(/[0Ｏ]/g,'O');
-    return /^I[DO]ESP/.test(norm);
-  }
-  let Nacionalidad = "";
-  if (MRZ_L1 && isSpainFromL1(MRZ_L1)) Nacionalidad = "España";
-  if (!Nacionalidad && MRZ_L2 && MRZ_L2.includes("ESP")) Nacionalidad = "España";
-
-  // Nº documento
-  function docFromL1(l1, l2){
+  // Nº doc desde L1/L2
+  function docFromL1L2(l1,l2){
+    if (!l1) return "";
     const m = l1.match(/<{3,}/);
-    if (m){
-      const idx = m.index;
-      if (idx >= 9) return l1.slice(idx-9, idx).toUpperCase();
-    }
-    if (l2 && /^(<|<+)/.test(l2)){
-      const clean = l1.replace(/</g,'');
-      if (clean.length >= 9) return clean.slice(-9).toUpperCase();
-    }
+    if (m){ const idx=m.index; if (idx>=9) return l1.slice(idx-9, idx).toUpperCase(); }
+    if (l2){ const clean=l1.replace(/</g,''); if (clean.length>=9) return clean.slice(-9).toUpperCase(); }
     return "";
   }
-  let numDoc = MRZ_L1 ? docFromL1(MRZ_L1, MRZ_L2) : "";
-  if (!numDoc && MRZ_L1){
-    const mAlt = MRZ_L1.match(/([0-9]{8}[A-Z])/);
-    if (mAlt) numDoc = mAlt[1].toUpperCase();
-  }
+  let numDoc = docFromL1L2(MRZ_L1, MRZ_L2);
 
-  // Fecha (YYMMDD -> dd/mm/aaaa) y Sexo desde L2
-  let fechaNac = "", sexo = "";
-  {
-    const mapDigit = (ch)=>{
-      if (/[0-9]/.test(ch)) return ch;
-      const t = ch.toUpperCase();
-      if (t==='O' || t==='Q') return '0';
-      if (t==='I' || t==='L') return '1';
-      if (t==='Z') return '2';
-      if (t==='S') return '5';
-      if (t==='B') return '8';
-      return '0';
-    };
-    const m = MRZ_L2 ? MRZ_L2.match(/^([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/) : null;
-    if (m) {
+  // Fecha y sexo desde L2 (mapDigit para confusiones)
+  let fechaNac="", sexo="";
+  if (MRZ_L2){
+    const m = MRZ_L2.match(/([0-9A-Z]{2})([0-9A-Z]{2})([0-9A-Z]{2}).([MF])/);
+    if (m){
       const yy = parseInt(mapDigit(m[1][0]) + mapDigit(m[1][1]),10);
       const mm = mapDigit(m[2][0]) + mapDigit(m[2][1]);
       const dd = mapDigit(m[3][0]) + mapDigit(m[3][1]);
       const year = yy >= 30 ? 1900 + yy : 2000 + yy;
       fechaNac = `${dd}/${mm}/${year}`;
-      sexo = m[4] === "F" ? "FEMENINO" : "MASCULINO";
+      sexo = m[4] === 'F' ? 'FEMENINO' : 'MASCULINO';
     }
   }
 
-  // Apellidos y Nombres desde L3
-  let nombre = "", apellidos = "";
-  if(MRZ_L3){
-    const parts = MRZ_L3.split("<").filter(Boolean);
-    const ap1 = parts[0] || "", ap2 = parts[1] || "";
-    const nom1 = parts[2] || "", nom2 = parts[3] || "";
-    apellidos = [ap1, ap2].filter(Boolean).join(" ").trim().toUpperCase();
-    nombre = tcase([nom1, nom2].filter(Boolean).join(" ").trim());
-  }
-  let nombreUncertain = mrzL3FromNS;   // si vino del fallback desde NS, marcar amarillo
-  let apellidosUncertain = mrzL3FromNS;
+  // Nacionalidad
+  let Nacionalidad = (MRZ_L1.includes('ESP') || MRZ_L2.includes('ESP')) ? "España" : "";
 
-  // Tipo documento
-  let tipo = "DNI";
+  // Apellidos/Nombre desde L3 (sin dígitos)
+  let nombre="", apellidos="";
+  if (MRZ_L3){
+    const parts = MRZ_L3.split('<').filter(Boolean);
+    const ap1 = (parts[0]||"").replace(/[0-9]/g,'');
+    const ap2 = (parts[1]||"").replace(/[0-9]/g,'');
+    const nom1= (parts[2]||"").replace(/[0-9]/g,'');
+    const nom2= (parts[3]||"").replace(/[0-9]/g,'');
+    apellidos = [ap1,ap2].filter(Boolean).join(' ').trim().toUpperCase();
+    nombre = tcase([nom1,nom2].filter(Boolean).join(' ').trim());
+  }
 
   // Sanitización final
-  const HEADER_RE = new RegExp(
-    '^(?:'
-      + 'D[O0Q]M[IL1N][CÇG][IL1][IL1][IO0Q]'
-      + '|L[UÜV][G6][A4]R\\s*D[EE]?\\s*N[ A]*A?C[IM1][IM1][E3][MN][T7][O0]'
-      + '|H[IJ1][J1][OA0](?:\\/[A@])?\\s*D[EE]'
-    + ')[\\s:.-]*'
-  , 'g');
-  const sanitizeHeaderValue = (s)=>{
-    if(!s) return '';
-    const up = String(s).toUpperCase().replace(HEADER_RE, '');
-    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
+  const sanitize = s => (s||"").replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
+  let out = {
+    Nombre: tcase(sanitize(nombre)),
+    Apellidos: sanitize(apellidos).toUpperCase(),
+    "Tipo de documento": "DNI",
+    "Nº Documento": sanitize(numDoc||""),
+    Sexo: sanitize(sexo),
+    Nacionalidad: sanitize(Nacionalidad),
+    "Nombre de los Padres": tcase(sanitize(padres)).replace(/\sY\s/g,' y '),
+    "Fecha de nacimiento": sanitize(fechaNac),
+    "Lugar de nacimiento": tcase(sanitize(lugarNac)),
+    Domicilio: tcase(sanitize(domicilio)),
+    _flags:{
+      Nombre: !nombre,
+      Apellidos: !apellidos,
+      Padres: padresUncertain,
+      Lugar: lugarUncertain,
+      Domicilio: domicilioUncertain
+    }
   };
-  const STRIP_EQUIPO_RE = /\bEQUIPO\b[:\s-]*/g;
-  const stripEquipo = (s)=>{
-    if(!s) return '';
-    const up = String(s).toUpperCase().replace(STRIP_EQUIPO_RE, '');
-    return up.replace(/^[\s:.,-]+|[\s:.,-]+$/g,'').replace(/\s{2,}/g,' ').trim();
-  };
-
-  // Aplicar limpieza
-  let domicilioFin    = tcase(stripEquipo(sanitizeHeaderValue(domicilio)));
-  let lugarNacFin     = tcase(stripEquipo(sanitizeHeaderValue(lugarNac)));
-  let padresFin       = tcase(stripEquipo(sanitizeHeaderValue(padres))).replace(/\sY\s/g, ' y ');
-  let nombreFin       = tcase(stripEquipo(nombre));
-  let apellidosFin    = stripEquipo(apellidos).toUpperCase();
-  let nacionalidadFin = stripEquipo(Nacionalidad);
-  let tipoFin         = stripEquipo(tipo);
-  let fechaNacFin     = stripEquipo(fechaNac);
-  let sexoFin         = stripEquipo(sexo);
-  let numDocFin       = stripEquipo(numDoc || "");
-
-  const flags = {
-    Nombre: !!nombreUncertain,
-    Apellidos: !!apellidosUncertain,
-    Padres: !!padresUncertain,
-    Lugar: !!lugarUncertain,
-    Domicilio: !!domicilioUncertain
-  };
-
-  return {
-    Nombre: nombreFin,
-    Apellidos: apellidosFin,
-    "Tipo de documento": tipoFin,
-    "Nº Documento": numDocFin,
-    Sexo: sexoFin,
-    Nacionalidad: nacionalidadFin,
-    "Nombre de los Padres": padresFin,
-    "Fecha de nacimiento": fechaNacFin,
-    "Lugar de nacimiento": lugarNacFin,
-    Domicilio: domicilioFin,
-    _flags: flags
-  };
+  return out;
 }
 
+// ---------- UI ----------
 function validateAll(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
@@ -773,7 +588,7 @@ function renderLista(){
   ul.innerHTML = "";
   expediente.filiaciones.forEach((f,i)=>{
     const li = document.createElement('li');
-    const label = `${i+1}. ${f.Apellidos || '(sin apellidos)'} ${f.Nombre ? ', '+f.Nombre : ''}`;
+    const label = `${i+1}. ${f.Apellidos || '(sin apellidos)'}${f.Nombre ? ', '+f.Nombre : ''}`;
     li.textContent = label;
     const btn = document.createElement('button');
     btn.className = "btn secondary";
@@ -792,8 +607,6 @@ function renderLista(){
     ul.appendChild(li);
   });
 }
-function updateFilename(){ /* ya no usamos apellidos para nombre */ }
-
 function getFormAsFiliacion(){
   return {
     "Nombre": document.getElementById('Nombre').value,
@@ -822,18 +635,8 @@ function fillFormFromParsed(p){
   if(p["Lugar de nacimiento"]!=null) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
   if(p.Domicilio!=null) document.getElementById('Domicilio').value = p.Domicilio;
 
-  // marcar dudas (amarillo) según flags
-  const idMap = {
-    Nombre: 'Nombre',
-    Apellidos: 'Apellidos',
-    Padres: 'Padres',
-    Lugar: 'Lugar',
-    Domicilio: 'Domicilio'
-  };
-  // limpiar marcas anteriores
-  for (const key in idMap){
-    const el = document.getElementById(idMap[key]);
-    if (el) el.classList.remove('uncertain');
+  for (const id of ['Nombre','Apellidos','Padres','Lugar','Domicilio']){
+    document.getElementById(id)?.classList.remove('uncertain');
   }
   if (p._flags){
     if (p._flags.Nombre) document.getElementById('Nombre')?.classList.add('uncertain');
@@ -845,7 +648,6 @@ function fillFormFromParsed(p){
 
   validateAll();
 }
-// Limpia SOLO la UI (mantiene expediente)
 function clearFormOnly(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
@@ -854,66 +656,52 @@ function clearFormOnly(){
     });
   const ta = document.getElementById('Doc');
   if (ta) ta.value = "";
-  updateCount();
-  validateAll();
+  updateCount(); validateAll();
 }
-
 function processOCR(ocr){
   if(!ocr.trim()){ alert("Portapapeles vacío. Copia el OCR primero."); return; }
   const parsed = parseByRules(ocr);
   fillFormFromParsed(parsed);
 }
 
-// Eventos
+// ---------- eventos ----------
 document.getElementById('readAnalyze').addEventListener('click', async ()=>{
   const ocr = await readFromClipboard();
   processOCR(ocr);
 });
-
 document.getElementById('gptComparecencia').addEventListener('click', ()=>{
   window.open('https://chatgpt.com/g/g-68fe060630348191b62c44416164a37d-comparecencia','_blank','noopener');
 });
-
+async function readFromClipboard(){
+  try{ const txt = await navigator.clipboard.readText(); return txt || ""; }
+  catch{ const m = prompt("Pega manualmente el texto:"); return m || ""; }
+}
 document.getElementById('integrarDoc').addEventListener('click', async ()=>{
   const txt = await readFromClipboard();
   if (!txt.trim()) { alert("Portapapeles vacío."); return; }
   document.getElementById('Doc').value = txt;
   expediente.doc = txt;
 });
-
 document.getElementById('addFiliacion').addEventListener('click', ()=>{
   const f = getFormAsFiliacion();
   const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
   if (!anyVal){ alert("Ficha vacía."); return; }
   expediente.filiaciones.push(f);
   updateCount();
-  clearFormOnly(); // vaciar para siguiente filiación (memoria intacta)
+  clearFormOnly();
 });
-
 document.getElementById('clearForm').addEventListener('click', clearFormOnly);
-
-document.getElementById('Doc').addEventListener('input', (e)=>{
-  expediente.doc = e.target.value;
-});
-
+document.getElementById('Doc').addEventListener('input', (e)=>{ expediente.doc = e.target.value; });
 document.getElementById('download').addEventListener('click', ()=>{
   expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
-
   if (expediente.filiaciones.length === 0){
     const f = getFormAsFiliacion();
     const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
     if (anyVal) expediente.filiaciones.push(f);
   }
-
-  const data = {
-    doc: expediente.doc,
-    filiaciones: expediente.filiaciones
-  };
-
-  const d = new Date();
-  const pad = n => String(n).padStart(2,'0');
+  const data = { doc: expediente.doc, filiaciones: expediente.filiaciones };
+  const d = new Date(); const pad = n => String(n).padStart(2,'0');
   const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())} ${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.json`;
-
   const a=document.createElement('a');
   a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
   a.download=fname; a.click();

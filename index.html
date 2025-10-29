@@ -175,55 +175,53 @@ function parseByRules(ocrRaw){
   const idxHIJO = findHeaderLine(RX_HIJO_NS);
   const idxEQUIPO = U.findIndex(s => s.trim() === 'EQUIPO');
 
-  // DOMICILIO: desde DOM hasta LUGAR o EQUIPO
+  // DOMICILIO (una sola línea, usando NS): desde "DOMICILIO" hasta el primer anclaje siguiente
   let domicilio = "";
-  if (idxDOM !== -1){
-    const end = [idxLUG, idxEQUIPO].filter(i=>i>-1 && i>idxDOM).sort((a,b)=>a-b)[0];
-    const stop = (end !== undefined) ? end : lines.length;
-    let parts = [];
-    for (let i=idxDOM+1; i<stop; i++){
-      const up = U[i];
-      if (up === 'EQUIPO'){
-        const nxt = lines[i+1] || "";
-        const nxtU = U[i+1] || "";
-        const looksNumCode = /[0-9]/.test(nxt) || /^[A-Z0-9]{4,}$/.test(nxtU);
-        if (looksNumCode) i++;
-        break;
-      }
-      parts.push(lines[i]);
-    }
-    domicilio = parts.join(", ").trim();
-  } else {
-    // Heurística de calle si no hay encabezado DOMICILIO
-    const looksAddr = s => /^(C\.|C\/|CALLE|AV(DA)?|AVENIDA|CTRA|CARRETERA|PLAZA|PZA|PASEO|PSO|CAMINO|CMNO|URB|VIA)\b/i.test(s||"");
-    const start = lines.findIndex(looksAddr);
-    if (start !== -1){
-      const stop = [idxLUG, idxHIJO, idxEQUIPO].filter(i=>i>-1 && i>start).sort((a,b)=>a-b)[0];
-      let parts = [];
-      const limit = (stop ?? lines.length);
-      for (let i=start; i<limit; i++){
-        if (U[i] === 'EQUIPO'){
-          const nxt = lines[i+1] || "";
-          const nxtU = U[i+1] || "";
-          const looksNumCode = /[0-9]/.test(nxt) || /^[A-Z0-9]{4,}$/.test(nxtU);
-          if (looksNumCode) i++;
-          break;
-        }
-        parts.push(lines[i]);
-      }
-      domicilio = parts.join(", ").trim();
+  {
+    const s = NS;
+    const key = 'DOMICILIO';
+    const iDom = s.indexOf(key);
+    if (iDom !== -1){
+      const start = iDom + key.length;
+      // Anclajes de corte en orden natural
+      const a1 = s.indexOf('LUGARDENACIMIENTO', start);
+      const a1b = s.indexOf('LAGARDENACIMIENTO', start); // tolerancia OCR
+      const a2 = s.indexOf('EQUIPO', start);
+      const a3 = s.indexOf('HIJO/ADE', start);
+      const a3b = s.indexOf('HIJOADE', start);
+      const a4 = s.indexOf('IDESP', start);
+      const a5 = s.indexOf('IOESP', start);
+      const a6 = s.indexOf('<', start);
+      const candidates = [a1,a1b,a2,a3,a3b,a4,a5,a6].filter(i=>i!==-1);
+      const end = candidates.length ? Math.min(...candidates) : s.length;
+      domicilio = s.slice(start, end).trim();
     }
   }
 
-  // LUGAR DE NACIMIENTO: desde LUGAR hasta HIJO
+  // LUGAR DE NACIMIENTO (una sola línea): tras LUGARDENACIMIENTO/LAGARDENACIMIENTO hasta HIJO/ADE
   let lugarNac = "";
-  if (idxLUG !== -1){
-    const stop = (idxHIJO !== -1) ? idxHIJO : lines.length;
-    const parts = [];
-    for (let i=idxLUG+1; i<stop; i++){
-      parts.push(lines[i]);
+  {
+    const s = NS;
+    const keys = ['LUGARDENACIMIENTO','LAGARDENACIMIENTO'];
+    let iLug = -1, k = '';
+    for (const kk of keys){ const ii = s.indexOf(kk); if (ii!==-1){ iLug=ii; k=kk; break; } }
+    if (iLug !== -1){
+      const start = iLug + k.length;
+      const a1 = s.indexOf('HIJO/ADE', start);
+      const a1b = s.indexOf('HIJOADE', start);
+      const a2 = s.indexOf('IDESP', start);
+      const a3 = s.indexOf('IOESP', start);
+      const a4 = s.indexOf('<', start);
+      const a5 = s.indexOf('DOMICILIO', start);
+      const a6 = s.indexOf('EQUIPO', start);
+      const candidates = [a1,a1b,a2,a3,a4,a5,a6].filter(i=>i!==-1);
+      const end = candidates.length ? Math.min(...candidates) : s.length;
+      let seg = s.slice(start, end);
+      // En NACIMIENTO, los números no son típicos → corta si aparecen
+      const cutNum = seg.search(/[0-9]/);
+      if (cutNum !== -1) seg = seg.slice(0, cutNum);
+      lugarNac = seg.trim();
     }
-    lugarNac = parts.join(", ").trim();
   }
 
   // PADRES (una sola línea): tomar lo inmediato tras HIJO/A DE hasta IDESP/IOESP/< o EQUIPO
@@ -249,8 +247,10 @@ function parseByRules(ocrRaw){
       // Cortar números accidentales (no forman parte de nombres de padres)
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      // Normalizar separadores padre/madre: / o I o L o ! o ¡
-      seg = seg.replace(/[\/IL!¡]+/g, ' y ');
+      // Normalizar separadores padre/madre: / | ! ¡ o rachas de II o LL (no individuales)
+      seg = seg
+        .replace(/[\/|!¡]+/g, ' y ')
+        .replace(/I{2,}|L{2,}/g, ' y ');
       // Comprimir espacios múltiples (aunque NS no tiene, por si se añadió " y ")
       seg = seg.replace(/\s{2,}/g,' ').trim();
 

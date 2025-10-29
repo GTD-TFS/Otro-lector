@@ -27,7 +27,14 @@
     .grid{display:grid;gap:16px}
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;backdrop-filter:blur(10px)}
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.06));
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:16px;
+      backdrop-filter:blur(10px);
+      box-shadow:0 10px 28px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.07);
+    }
     .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
     .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
     .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
@@ -50,6 +57,9 @@
     input.invalid,select.invalid{border-color:var(--red)!important}
     .span2{grid-column:1/-1}
     .badge{padding:4px 8px;border-radius:9999px;background:rgba(255,255,255,.12);border:1px solid var(--border);font-size:12px}
+    .badge{ box-shadow:0 2px 10px rgba(77,163,255,.12), inset 0 0 0 1px rgba(255,255,255,.05) }
+    .btn:hover{ box-shadow:0 6px 18px rgba(77,163,255,.20) }
+    .btn:focus{ outline:2px solid rgba(77,163,255,.45); outline-offset:2px }
     .grow{flex:1}
     ul.list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
     ul.list li{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:rgba(255,255,255,.06);font-size:12px}
@@ -216,23 +226,35 @@ function parseByRules(ocrRaw){
     lugarNac = parts.join(", ").trim();
   }
 
-  // PADRES: desde HIJO/A DE hasta la línea que empiece por IDESP/IOESP
-  const U_noSpace = U.map(noSpace);
-  let idxMRZ_L1_line = -1;
-  for(let i=0;i<U_noSpace.length;i++){
-    if (/^I[DO]ESP/.test(U_noSpace[i])) { idxMRZ_L1_line = i; break; }
-  }
+  // PADRES (una sola línea): tomar lo inmediato tras HIJO/A DE hasta IDESP/IOESP/< o EQUIPO
   let padres = "";
   if (idxHIJO !== -1){
-    const stop = (idxMRZ_L1_line !== -1) ? idxMRZ_L1_line : lines.length;
-    const parts = [];
-    for (let i=idxHIJO+1; i<stop; i++){
-      parts.push(lines[i]);
-    }
-    padres = parts.join(" ").replace(/\s*\/\s*/g," y ").trim();
-    if (!/ y /i.test(padres)) {
-      const arr = padres.split(/\s+/).filter(Boolean);
-      padres = arr.length>=2 ? (arr[0] + " y " + arr.slice(1).join(" ")) : padres;
+    // Trabajamos sobre la cadena sin espacios
+    const s = NS; // noSpace(raw)
+
+    // Buscar anclaje HIJO/A DE en la cadena aplastada
+    const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
+    const mH = rxHijo.exec(s);
+    if (mH){
+      const start = mH.index + mH[0].length;
+      // Cortes fuertes: IDESP/IOESP, '<', EQUIPO
+      const idxIDESP = s.indexOf('IDESP', start);
+      const idxIOESP = s.indexOf('IOESP', start);
+      const idxLT    = s.indexOf('<', start);
+      const idxEQ    = s.indexOf('EQUIPO', start);
+      const candidates = [idxIDESP, idxIOESP, idxLT, idxEQ].filter(i=>i!==-1);
+      const end = candidates.length ? Math.min(...candidates) : s.length;
+
+      let seg = s.slice(start, end);
+      // Cortar números accidentales (no forman parte de nombres de padres)
+      const cutNum = seg.search(/[0-9]/);
+      if (cutNum !== -1) seg = seg.slice(0, cutNum);
+      // Normalizar separadores padre/madre: / o I o L o ! o ¡
+      seg = seg.replace(/[\/IL!¡]+/g, ' y ');
+      // Comprimir espacios múltiples (aunque NS no tiene, por si se añadió " y ")
+      seg = seg.replace(/\s{2,}/g,' ').trim();
+
+      padres = seg;
     }
   }
 

@@ -11,20 +11,30 @@
       --green:#22c57b; --red:#ff5656;
     }
     *{box-sizing:border-box}
-    body{margin:0;padding:20px;font-family:system-ui,"Segoe UI",Arial;color:var(--fg);background:#0b1220}
+    body{
+      margin:0;padding:20px;
+      font-family:system-ui,"Segoe UI",Arial;
+      color:var(--fg);
+      /* Fondo con imagen */
+      background:
+        linear-gradient(180deg, rgba(11,18,32,.85), rgba(11,18,32,.88)),
+        url('aq.jpeg) center / cover no-repeat fixed;
+      min-height:100dvh;
+    }
     h1{
       margin:0 0 14px;
-      font-size:28px;
+      font-size:32px;
       line-height:1.1;
       letter-spacing:.6px;
-      font-weight:700;
+      font-weight:800;
       background:linear-gradient(92deg, #e6eefc, #8fc8ff 45%, #4da3ff 80%);
       -webkit-background-clip:text;
       background-clip:text;
       color:transparent;
-      text-shadow:0 1px 0 rgba(0,0,0,.2);
+      text-shadow:0 1px 0 rgba(0,0,0,.25);
+      text-align:center;               /* centrado */
     }
-    .grid{display:grid;gap:16px}
+    .grid{display:grid;gap:16px;max-width:1100px;margin:0 auto} /* centrado del layout */
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{
@@ -36,6 +46,7 @@
       box-shadow:0 10px 28px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.07);
     }
     .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
+    .row.center{justify-content:center}                   /* centrado de botones */
     .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
     .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
     /* Broom button accent (orange) */
@@ -72,17 +83,15 @@
 <div class="grid two">
   <!-- ACCIONES -->
   <div class="card">
-    <div class="row">
+    <div class="row center">
       <button class="btn" id="readAnalyze">Integrar filiación</button>
       <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT</button>
       <button class="btn secondary broom" id="clearForm" title="Limpiar formulario">🧹</button>
-      <div class="grow"></div>
     </div>
 
-    <div class="row" style="margin-top:10px">
+    <div class="row center" style="margin-top:10px">
       <span class="badge">Filiaciones: <span id="countF">0</span></span>
       <ul class="list" id="listaF"></ul>
-      <div class="grow"></div>
     </div>
   </div>
 
@@ -90,8 +99,8 @@
   <div class="card">
     <div class="fields">
       <div class="span2">
-        <label>Comparecencia (DOC)</label>
-        <div class="row" style="margin:6px 0 8px 0">
+        <!-- Se quita el texto 'Comparecencia (DOC)' como pediste -->
+        <div class="row center" style="margin:6px 0 8px 0">
           <button class="btn" id="integrarDoc">Integrar comparecencia</button>
         </div>
         <textarea id="Doc" placeholder="Pega aquí la comparecencia…"></textarea>
@@ -119,9 +128,8 @@
       </div>
 
       <div class="span2"></div>
-      <div class="span2 row" style="margin-top:6px">
+      <div class="span2 row center" style="margin-top:6px">
         <button class="btn" id="addFiliacion">Agregar filiación al expediente</button>
-        <div class="grow"></div>
         <button class="btn" id="download">Descargar proyecto</button>
       </div>
     </div>
@@ -140,6 +148,115 @@ const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéí
 const ucase = s => (s||"").toUpperCase();
 const normalize = s => (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 const noSpace = s => normalize(s).replace(/\s+/g,'');
+
+// --- MUNICIPIOS: loader + matcher (JSON externo con fallback embebido) ------
+const MUNICIPIOS_EMBED = [
+  "MADRID","BARCELONA","VALENCIA","SEVILLA","ZARAGOZA","MALAGA","MURCIA",
+  "PALMA","BILBAO","LAS PALMAS DE GRAN CANARIA","SANTA CRUZ DE TENERIFE",
+  "SAN CRISTOBAL DE LA LAGUNA","TELDE","ARRECIFE","ARONA","ADEJE","GRANADILLA DE ABONA",
+  "PUERTO DE LA CRUZ","LA OROTAVA","SANTA LUCIA DE TIRAJANA","ARUCAS","AGUIMES","MOYA","ICOD DE LOS VINOS",
+  "LA LAGUNA","LAS PALMAS","SANTA CRUZ"
+];
+let MUNICIPIOS_SET = new Set(MUNICIPIOS_EMBED.map(x => normalize(String(x))));
+let MUNICIPIOS_NOSPACE_MAP = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
+
+async function initMunicipios(){
+  try{
+    const res = await fetch('municipios.json');
+    if (!res.ok) return; // embed si falla
+    const arr = await res.json();
+    if (Array.isArray(arr)) {
+      MUNICIPIOS_SET = new Set(arr.map(x => normalize(String(x))));
+      MUNICIPIOS_NOSPACE_MAP = new Map([...MUNICIPIOS_SET].map(m => [m.replace(/\s+/g,''), m]));
+    }
+  }catch{/* offline: usar embed */}
+}
+
+function normTextAtoZ(s){
+  return (s||"").normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+    .replace(/[^A-ZÑÁÉÍÓÚÜ\s-]/g,'').replace(/\s+/g,' ').trim();
+}
+
+// Distancia de edición (Damerau-Levenshtein) limitada a 2
+function damerauLevenshtein(a,b,limit=2){
+  a=a||""; b=b||""; if(a===b) return 0; if(!a||!b) return Math.min(limit+1, Math.max(a.length,b.length));
+  const al=a.length, bl=b.length; if (Math.abs(al-bl)>limit) return limit+1;
+  const dp=Array.from({length:al+1},()=>Array(bl+1).fill(0));
+  for(let i=0;i<=al;i++) dp[i][0]=i; for(let j=0;j<=bl;j++) dp[0][j]=j;
+  for(let i=1;i<=al;i++){
+    let minRow=limit+1;
+    for(let j=1;j<=bl;j++){
+      const cost=a[i-1]===b[j-1]?0:1;
+      let v=Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost);
+      if(i>1&&j>1&&a[i-1]===b[j-2]&&a[i-2]===b[j-1]) v=Math.min(v, dp[i-2][j-2]+1);
+      dp[i][j]=v; if(v<minRow) minRow=v;
+    }
+    if(minRow>limit) return limit+1;
+  }
+  return dp[al][bl];
+}
+
+function matchMunicipio(raw){
+  if (!MUNICIPIOS_SET || typeof MUNICIPIOS_SET.size==='undefined'){
+    return {canon:normTextAtoZ(raw||''), approx:false, found:false};
+  }
+  if (!raw) return {canon:"", approx:false, found:false};
+  const cand = normTextAtoZ(raw);
+  const can  = normalize(cand);
+  if (!MUNICIPIOS_SET.size) return {canon:cand, approx:false, found:false};
+  if (MUNICIPIOS_SET.has(can)) return {canon:cand, approx:false, found:true};
+  let best=null, bestD=3;
+  for (const m of MUNICIPIOS_SET){
+    const d = damerauLevenshtein(can, m, 2);
+    if (d<bestD){ bestD=d; best=m; if (d===0) break; }
+  }
+  if (best!=null && bestD<=2){
+    return {canon: best.replace(/\s+/g,' ').trim(), approx:true, found:true};
+  }
+  return {canon:cand, approx:false, found:false};
+}
+
+function matchMunicipioSuffixNS(ns){
+  if (!ns) return null;
+  if (!MUNICIPIOS_NOSPACE_MAP || !MUNICIPIOS_NOSPACE_MAP.size) return null;
+  const maxLen = Math.min(32, ns.length);
+  for (let len = maxLen; len >= 5; len--) {
+    const sub = ns.slice(ns.length - len);
+    const hit = MUNICIPIOS_NOSPACE_MAP.get(sub);
+    if (hit) return { canon: hit, index: ns.length - len };
+  }
+  return null;
+}
+// ---------------------------------------------------------------------------
+
+// --- NOMBRES: loader + validador (SOLO JSON externo, sin embed) -------------
+let NOMBRES_SET = new Set();
+
+async function initNombres(){
+  try{
+    const res = await fetch('nombres.json');
+    if (!res.ok) return; // si no está, no valida pero no rompe
+    const arr = await res.json();
+    if (Array.isArray(arr)) {
+      NOMBRES_SET = new Set(arr.map(x=>normalize(String(x))));
+    }
+  }catch{/* offline: sin nombres */}
+}
+
+function isNombre(raw){
+  const tok = normalize(normTextAtoZ(raw));
+  if (!tok) return {ok:false, approx:false};
+  if (!NOMBRES_SET || !NOMBRES_SET.size) return {ok:false, approx:false};
+  if (NOMBRES_SET.has(tok)) return {ok:true, approx:false};
+  const limit = tok.length<=6 ? 1 : 2;
+  let bestD=limit+1;
+  for (const n of NOMBRES_SET){
+    const d = damerauLevenshtein(tok, n, limit);
+    if (d<bestD){ bestD=d; if (d===0) break; }
+  }
+  return {ok: bestD<=limit, approx: bestD<=limit};
+}
+// ---------------------------------------------------------------------------
 
 async function readFromClipboard(){
   try{
@@ -175,7 +292,7 @@ function parseByRules(ocrRaw){
   const idxHIJO = findHeaderLine(RX_HIJO_NS);
   const idxEQUIPO = U.findIndex(s => s.trim() === 'EQUIPO');
 
-  // DOMICILIO (una sola línea, usando NS): desde "DOMICILIO" hasta el primer anclaje siguiente
+  // DOMICILIO (una sola línea usando NS): desde "DOMICILIO" hasta el primer anclaje siguiente
   let domicilio = "";
   {
     const s = NS;
@@ -183,9 +300,8 @@ function parseByRules(ocrRaw){
     const iDom = s.indexOf(key);
     if (iDom !== -1){
       const start = iDom + key.length;
-      // Anclajes de corte en orden natural
       const a1 = s.indexOf('LUGARDENACIMIENTO', start);
-      const a1b = s.indexOf('LAGARDENACIMIENTO', start); // tolerancia OCR
+      const a1b = s.indexOf('LAGARDENACIMIENTO', start);
       const a2 = s.indexOf('EQUIPO', start);
       const a3 = s.indexOf('HIJO/ADE', start);
       const a3b = s.indexOf('HIJOADE', start);
@@ -194,7 +310,15 @@ function parseByRules(ocrRaw){
       const a6 = s.indexOf('<', start);
       const candidates = [a1,a1b,a2,a3,a3b,a4,a5,a6].filter(i=>i!==-1);
       const end = candidates.length ? Math.min(...candidates) : s.length;
-      domicilio = s.slice(start, end).trim();
+
+      let domNS = s.slice(start, end).trim();
+      const suf = matchMunicipioSuffixNS(domNS);
+      if (suf) {
+        const streetNS = domNS.slice(0, suf.index);
+        domicilio = streetNS + ', ' + suf.canon; // calle + municipio
+      } else {
+        domicilio = domNS;
+      }
     }
   }
 
@@ -217,25 +341,22 @@ function parseByRules(ocrRaw){
       const candidates = [a1,a1b,a2,a3,a4,a5,a6].filter(i=>i!==-1);
       const end = candidates.length ? Math.min(...candidates) : s.length;
       let seg = s.slice(start, end);
-      // En NACIMIENTO, los números no son típicos → corta si aparecen
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      lugarNac = seg.trim();
+      const rawLoc = seg.trim();
+      const mloc = matchMunicipio(rawLoc);
+      lugarNac = mloc.found ? mloc.canon : rawLoc;
     }
   }
 
-  // PADRES (una sola línea): tomar lo inmediato tras HIJO/A DE hasta IDESP/IOESP/< o EQUIPO
+  // PADRES (una sola línea): tras HIJO/A DE hasta IDESP/IOESP/< o EQUIPO
   let padres = "";
   if (idxHIJO !== -1){
-    // Trabajamos sobre la cadena sin espacios
-    const s = NS; // noSpace(raw)
-
-    // Buscar anclaje HIJO/A DE en la cadena aplastada
+    const s = NS;
     const rxHijo = /H[IJ1][J1][OA0](?:\/[A@])?DE/;
     const mH = rxHijo.exec(s);
     if (mH){
       const start = mH.index + mH[0].length;
-      // Cortes fuertes: IDESP/IOESP, '<', EQUIPO
       const idxIDESP = s.indexOf('IDESP', start);
       const idxIOESP = s.indexOf('IOESP', start);
       const idxLT    = s.indexOf('<', start);
@@ -244,17 +365,20 @@ function parseByRules(ocrRaw){
       const end = candidates.length ? Math.min(...candidates) : s.length;
 
       let seg = s.slice(start, end);
-      // Cortar números accidentales (no forman parte de nombres de padres)
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
-      // Normalizar separadores padre/madre: / | ! ¡ o rachas de II o LL (no individuales)
       seg = seg
         .replace(/[\/|!¡]+/g, ' y ')
-        .replace(/I{2,}|L{2,}/g, ' y ');
-      // Comprimir espacios múltiples (aunque NS no tiene, por si se añadió " y ")
-      seg = seg.replace(/\s{2,}/g,' ').trim();
+        .replace(/I{2,}|L{2,}/g, ' y ')
+        .replace(/\s{2,}/g,' ').trim();
 
-      padres = seg;
+      const partes = seg.split(/\s+y\s+/i).slice(0,2).filter(Boolean);
+      const partesVal = partes.map(p => {
+        const words = p.split(/\s+/).filter(Boolean);
+        const out = words.map(w => (isNombre(w).ok ? w : w));
+        return out.join(' ');
+      });
+      padres = partesVal.join(' y ').trim();
     }
   }
 
@@ -296,7 +420,7 @@ function parseByRules(ocrRaw){
   if (MRZ_L1 && isSpainFromL1(MRZ_L1)) Nacionalidad = "España";
   if (!Nacionalidad && MRZ_L2 && MRZ_L2.includes("ESP")) Nacionalidad = "España";
 
-  // Nº documento: 9 previos a '<' con fallback 8 dígitos + 1 letra en L1 si quedó vacío
+  // Nº documento
   function docFromL1(l1, l2){
     const m = l1.match(/<{3,}/);
     if (m){
@@ -422,7 +546,6 @@ function renderLista(){
     btn.className = "btn secondary";
     btn.textContent = "Editar";
     btn.onclick = ()=> {
-      // Cargar en formulario y quitar de la lista para re-guardar al terminar
       fillFormFromParsed(f);
       ["Telefono","Condicion"].forEach(id=>{
         const el=document.getElementById(id);
@@ -467,25 +590,16 @@ function fillFormFromParsed(p){
   if(p.Domicilio!=null) document.getElementById('Domicilio').value = p.Domicilio;
   validateAll();
 }
-// Limpia TODA la memoria y la UI: formulario, comparecencia y filiaciones
+// Limpia SOLO la UI (mantiene expediente)
 function clearFormOnly(){
-  // 1) Vaciar formulario de filiación
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
       const el=document.getElementById(id);
       if (el) el.value="";
     });
-
-  // 2) Vaciar comparecencia
   const ta = document.getElementById('Doc');
   if (ta) ta.value = "";
-
-  // 3) Mantener la memoria (expediente) intacta: solo limpiar UI
-
-  // 4) Refrescar contador y lista visible (no cambia la memoria)
   updateCount();
-
-  // 5) Refrescar validaciones
   validateAll();
 }
 
@@ -518,7 +632,7 @@ document.getElementById('addFiliacion').addEventListener('click', ()=>{
   if (!anyVal){ alert("Ficha vacía."); return; }
   expediente.filiaciones.push(f);
   updateCount();
-  clearFormOnly(); // vaciar para siguiente filiación
+  clearFormOnly(); // vaciar para siguiente filiación (memoria intacta)
 });
 
 document.getElementById('clearForm').addEventListener('click', clearFormOnly);
@@ -530,7 +644,6 @@ document.getElementById('Doc').addEventListener('input', (e)=>{
 document.getElementById('download').addEventListener('click', ()=>{
   expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
 
-  // Si no hay ninguna filiación acumulada, al menos guardo la actual si tiene algo
   if (expediente.filiaciones.length === 0){
     const f = getFormAsFiliacion();
     const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
@@ -552,7 +665,7 @@ document.getElementById('download').addEventListener('click', ()=>{
 });
 
 // init
-updateCount(); validateAll();
+updateCount(); validateAll(); initMunicipios(); initNombres();
 </script>
 
 </body>

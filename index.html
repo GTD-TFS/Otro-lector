@@ -54,7 +54,7 @@
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,.003));
+      background:linear-gradient(180deg, rgba(255,255,255,.15), rgba(255,255,255,.003));
       border:1px solid var(--border);
       border-radius:14px;
       padding:16px;
@@ -575,7 +575,81 @@ if (idxIDESP !== -1) {
       sexo = m[4] === 'F' ? 'FEMENINO' : 'MASCULINO';
     }
   }
+// --- PATCH DE CORRECCIÓN MRZ: limitar lectura a la zona antes del siguiente "ESP" o "<<<" ---
+(function(){
+  if (!MRZ_L1 && !MRZ_L2) return;
 
+  // 1. Corregir Nº Documento: restringir a la franja entre IDESP y el PRIMER '<<<'
+if (idxIDESP !== -1 && (!numDoc || !/[0-9]{7,8}[A-Z]$/.test(numDoc))) {
+  const firstArrows = NS.indexOf('<<<', idxIDESP);
+  if (firstArrows !== -1) {
+    const zone = NS.slice(idxIDESP, firstArrows); // solo dentro de L1
+
+    // A) DNI/NIE justo antes de '<' (preferido)
+    const mList = zone.match(/([0-9]{7,8}[A-Z])(?=<)/g);
+    if (mList && mList.length) {
+      numDoc = mList[mList.length - 1].toUpperCase();
+    } else {
+      // B) Último bloque alfanumérico antes de '<': tomar los últimos 9
+      const cut = zone.lastIndexOf('<');
+      if (cut > -1) {
+        const pre = zone.slice(0, cut);
+        const m2 = pre.match(/[A-Z0-9]{9}$/);
+        if (m2) numDoc = m2[0].toUpperCase();
+      }
+    }
+  }
+}
+
+  // 2. Corregir Fecha/Sexo si se detectan dentro de la línea posterior a IDESP
+  if ((!fechaNac || !sexo) && idxIDESP !== -1) {
+    const afterID = NS.slice(idxIDESP, idxIDESP + 120);
+    const mL2 = afterID.match(/([0-9A-Z]{6})([MF])/);
+    if (mL2) {
+      const raw6 = mL2[1].split("").map(mapDigit).join("");
+      const yy = parseInt(raw6.slice(0,2), 10);
+      const mm = raw6.slice(2,4);
+      const dd = raw6.slice(4,6);
+      const year = yy >= 30 ? 1900 + yy : 2000 + yy;
+      fechaNac = `${dd}/${mm}/${year}`;
+      sexo = mL2[2] === 'F' ? 'FEMENINO' : 'MASCULINO';
+    }
+  }
+})();
+// === PATCH SOLO FECHA NAC (L2 = YYMMDD + check + M/F) ===
+(function(){
+  if (idxIDESP === -1) return;
+
+  // si ya hay fecha válida (dd/mm/aaaa) y plausible, no tocamos
+  const okFecha = f => /^\d{2}\/\d{2}\/\d{4}$/.test(f) &&
+                       (m=>m>=1&&m<=12)(parseInt(f.slice(3,5),10)) &&
+                       (d=>d>=1&&d<=31)(parseInt(f.slice(0,2),10));
+  if (fechaNac && okFecha(fechaNac)) return;
+
+  const firstArrows = NS.indexOf('<<<', idxIDESP);
+  if (firstArrows === -1) return;
+
+  // M/F más cercano hacia la izquierda desde el primer '<<<'
+  let sexAt = -1;
+  for (let p = firstArrows - 1; p >= idxIDESP; p--) {
+    const ch = NS[p];
+    if (ch === 'M' || ch === 'F') { sexAt = p; break; }
+  }
+  if (sexAt === -1) return;
+
+  // L2: ... YYMMDD + check + (M/F)
+  if (sexAt - 7 >= idxIDESP) {
+    const raw7 = NS.slice(sexAt - 7, sexAt);        // 6 fecha + 1 check
+    const raw6 = raw7.slice(0, 6).split('').map(mapDigit).join('');
+    const yy = parseInt(raw6.slice(0,2), 10);
+    const mm = parseInt(raw6.slice(2,4), 10);
+    const dd = parseInt(raw6.slice(4,6), 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      const year = yy >= 30 ? 1900 + yy : 2000 + yy;
+      fechaNac = `${String(dd).padStart(2,'0')}/${String(mm).padStart(2,'0')}/${year}`;
+    }
+  }
+})();
   // Nacionalidad
   let Nacionalidad = (MRZ_L1.includes('ESP') || MRZ_L2.includes('ESP')) ? "España" : "";
 

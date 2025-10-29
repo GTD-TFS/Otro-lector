@@ -54,7 +54,7 @@
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+     background:linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.003));
       border:1px solid var(--border);
       border-radius:14px;
       padding:16px;
@@ -337,8 +337,19 @@ function parseByRules(ocrRaw){
 }
 
   // Anclajes
-  const idxIDESP = NS.indexOf('IDESP') !== -1 ? NS.indexOf('IDESP') : NS.indexOf('IOESP');
-  const idxEQUIPO = NS.indexOf('EQUIPO');
+// Normaliza confusiones OCR 1/l→I, 0/O→O, 5→S, Q/C→D (reemplazo 1:1, mantiene índice)
+const canonNS = NS.replace(/[l1]/g,'I').replace(/[0Ｏ]/g,'O').replace(/5/g,'S').replace(/[QC]/g,'D');
+
+// IDESP con variantes: IDESP / IOESP / IOSEP (en canonNS)
+const idxIDESP = (()=> {
+  const a = canonNS.indexOf('IDESP');
+  const b = canonNS.indexOf('IOESP');
+  const c = canonNS.indexOf('IOSEP');
+  const hits = [a,b,c].filter(i => i !== -1);
+  return hits.length ? Math.min(...hits) : -1;
+})();
+
+const idxEQUIPO = NS.indexOf('EQUIPO');
   const idxDOM = NS.indexOf('DOMICILIO');
   const idxLUG = (()=>{ const a=NS.indexOf('LUGARDENACIMIENTO'); if (a!==-1) return a; return NS.indexOf('LAGARDENACIMIENTO');})();
   const gStop = [idxIDESP, idxEQUIPO].filter(i=>i!==-1).reduce((m,i)=>Math.min(m,i), NS.length);
@@ -416,14 +427,20 @@ let padres = "", padresUncertain = true;
   };
 
   if (idxIDESP !== -1){
-    const adeIdxs = [];
-    let p = 0;
-    while (true){
-      const i = NS.indexOf('ADE', p);
-      if (i === -1 || i >= idxIDESP) break;
-      adeIdxs.push(i);
-      p = i + 3;
-    }
+  // Buscar anclaje 'ADE' robusto (A[ D/Q/C/O/0 ]?E) sobre NS (sin espacios), antes de IDESP; ordenados
+const adeIdxs = (()=> {
+  const out = [];
+  const rx = /A[ DQCO0O]?E/g; // ADE, AOE, A0E, AQE, ACE y AE
+  rx.lastIndex = 0;
+  let m;
+  while ((m = rx.exec(NS))) {
+    const i = m.index;
+    if (idxIDESP !== -1 && i < idxIDESP) out.push(i);
+    if (idxIDESP !== -1 && i >= idxIDESP) break;
+  }
+  out.sort((a,b)=>a-b);
+  return out;
+})();
 
     let candidates = adeIdxs;
     if (idxLUG !== -1){
@@ -470,7 +487,7 @@ let padres = "", padresUncertain = true;
     };
 
     if (candidates.length){
-      const iADE = candidates[0];
+        const iADE = candidates[candidates.length - 1];
       const segNS = NS.slice(iADE + 3, idxIDESP);
       const pair = extractPair(segNS);
       if (pair){

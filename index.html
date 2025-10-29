@@ -133,7 +133,7 @@
         <div class="row center" style="margin:6px 0 8px 0">
           <button class="btn" id="integrarDoc">Integrar comparecencia</button>
         </div>
-        <textarea id="Doc" placeholder="Pega aquí la comparecencia…"></textarea>
+        <textarea id="Doc"></textarea>
       </div>
 
       <!-- Ficha de filiación actual -->
@@ -406,71 +406,92 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // --- PADRES (HIJO/ADE → DE → IDESP) ---
+// --- PADRES (corte por 'ADE' → IDESP; usa librería, no peta; descompone nombres pegados) ---
 let padres = "", padresUncertain = true;
 {
-  const iH = (()=>{ 
-    const base = NS.indexOf('HIJOADE');
-    if (base!==-1) return base;
-    const alts = ['HUDIADE','NUOIADE','HLJOADE'];
-    for (const a of alts){ const i=NS.indexOf(a); if (i!==-1) return i; }
-    return -1;
-  })();
-  if (iH !== -1){
-    const iDE = NS.indexOf('DE', iH + 'HIJOADE'.length);
-    const end = (idxIDESP!==-1) ? idxIDESP : NS.length;
-    if (iDE!==-1 && iDE<end){
-      let seg = NS.slice(iDE + 2, end); // tras "DE"
-      seg = seg.replace(/[0-9]+/g,'');  // nunca números en nombres
+  const hasName = (tok)=>{
+    if (!tok) return false;
+    if (!NOMBRES_SET || NOMBRES_SET.size === 0) return false;
+    return NOMBRES_SET.has(normalize(tok));
+  };
 
-      // intenta separar por 'I' (OCR de "/") si da 2 nombres válidos
-      const tryISeps = () => {
-        for (let j=1;j<seg.length-1;j++){
-          if (seg[j] !== 'I') continue;
-          const left = seg.slice(0,j), right = seg.slice(j+1);
-          if (isNombre(left).ok && isNombre(right).ok) return [left,right];
+  if (idxIDESP !== -1){
+    const adeIdxs = [];
+    let p = 0;
+    while (true){
+      const i = NS.indexOf('ADE', p);
+      if (i === -1 || i >= idxIDESP) break;
+      adeIdxs.push(i);
+      p = i + 3;
+    }
+
+    let candidates = adeIdxs;
+    if (idxLUG !== -1){
+      const afterLugar = adeIdxs.filter(i => i > idxLUG);
+      if (afterLugar.length) candidates = afterLugar;
+    }
+
+    const extractPair = (segNS)=>{
+      let seg = (segNS||"").replace(/[0-9]+/g,'').replace(/[\/\|_!¡]+/g,'I');
+
+      const deco = (s)=>{
+        if (!s) return "";
+        if (hasName(s)) return tcase(s);
+        const C = s;
+        for (let k=2; k<=Math.min(12, C.length-2); k++){
+          const A = C.slice(0,k), B = C.slice(k);
+          if (hasName(A) && hasName(B)) return `${tcase(A)} ${tcase(B)}`;
         }
-        return null;
+        return "";
       };
 
-      // fallback: probar cortes generales buscando 2 nombres válidos
-      const tryGeneralSplit = () => {
-        const clean = seg.replace(/[\/_|!¡]+/g,' ');
-        const tokens = clean.split(/\s+/).filter(Boolean);
-        // Si tokens no sirven, probar cortes por longitudes
-        let chosen=null;
-        // (1) tokens → parejas válidas
-        for (let a=0;a<tokens.length;a++){
-          for (let b=a+1;b<tokens.length;b++){
-            const A=tokens[a], B=tokens[b];
-            if (isNombre(A).ok && isNombre(B).ok){ chosen=[A,B]; break; }
-          }
-          if (chosen) break;
-        }
-        // (2) por longitud si sigue sin salir
-        if (!chosen){
-          const c = seg.replace(/[\/_|!¡]+/g,'');
-          for (let k=2;k<=Math.min(12,c.length-2);k++){
-            const A=c.slice(0,k), B=c.slice(k);
-            if (isNombre(A).ok && isNombre(B).ok){ chosen=[A,B]; break; }
-          }
-        }
-        return chosen;
-      };
-
-      let pair = tryISeps();
-      if (!pair) pair = tryGeneralSplit();
-
-      if (pair){
-        padres = `${tcase(pair[0])} y ${tcase(pair[1])}`;
-        padresUncertain = false;
-      }else{
-        // como último recurso, conserva lo legible
-        padres = tcase(normAZ(seg));
-        padresUncertain = true;
+      for (let j=1;j<seg.length-1;j++){
+        if (seg[j] !== 'I') continue;
+        const L = seg.slice(0,j), R = seg.slice(j+1);
+        const Ld = deco(L), Rd = deco(R);
+        if (Ld && Rd) return `${Ld} y ${Rd}`;
       }
 
-      // filtra si por error son municipios/provincias
+      const compact = seg.replace(/I+/g,'');
+      for (let m=2;m<=Math.min(24, compact.length-2);m++){
+        const L = compact.slice(0,m), R = compact.slice(m);
+        const Ld = deco(L), Rd = deco(R);
+        if (Ld && Rd) return `${Ld} y ${Rd}`;
+      }
+
+      const toks = seg.split(/I+/).filter(Boolean);
+      for (let a=0;a<toks.length;a++){
+        for (let b=a+1;b<toks.length;b++){
+          const Ld = deco(toks[a]), Rd = deco(toks[b]);
+          if (Ld && Rd) return `${Ld} y ${Rd}`;
+        }
+      }
+      return "";
+    };
+
+    if (candidates.length){
+      const iADE = candidates[0];
+      const segNS = NS.slice(iADE + 3, idxIDESP);
+      const pair = extractPair(segNS);
+      if (pair){
+        padres = pair; padresUncertain = false;
+      } else {
+        padres = ""; padresUncertain = true;
+      }
+    } else if (idxLUG !== -1){
+      const start = idxLUG + (NS.startsWith('LUGARDENACIMIENTO', idxLUG) ? 'LUGARDENACIMIENTO'.length : 'LAGARDENACIMIENTO'.length);
+      if (start < idxIDESP){
+        const segNS = NS.slice(start, idxIDESP);
+        const pair = extractPair(segNS);
+        if (pair){
+          padres = pair; padresUncertain = false;
+        } else {
+          padres = ""; padresUncertain = true;
+        }
+      }
+    }
+
+    if (padres){
       const parts = padres.split(/\s+y\s+/i);
       if (parts.length===2){
         const badA = PROV_SET.has(normalize(parts[0])) || MUNICIPIOS_SET.has(normalize(parts[0]));

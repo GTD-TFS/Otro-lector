@@ -33,7 +33,7 @@
       content:"";
       position:fixed;
       inset:0;
-      background:linear-gradient(180deg, rgba(11,18,32,.5), rgba(11,18,32,.5));
+      background:linear-gradient(180deg, rgba(11,18,32,.45), rgba(11,18,32,.50));
       z-index:-1;
       pointer-events:none;
     }
@@ -54,7 +54,7 @@
     .two{grid-template-columns:1fr}
     @media(min-width:900px){.two{grid-template-columns:1fr 1fr}}
     .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.6));
+      background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
       border:1px solid var(--border);
       border-radius:14px;
       padding:16px;
@@ -98,6 +98,12 @@
     ul.list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
     ul.list li{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:rgba(255,255,255,.06);font-size:12px}
     ul.list li button{margin-left:8px}
+
+    /* Campo con duda (modo B, borde amarillo) */
+    input.uncertain, select.uncertain, textarea.uncertain{
+      border-color:#ffc107 !important;
+      box-shadow:0 0 0 2px rgba(255,193,7,.18) inset;
+    }
   </style>
   <link rel="preload" as="image" href="aq.png">
 </head>
@@ -123,7 +129,7 @@
   <div class="card">
     <div class="fields">
       <div class="span2">
-        <!-- Se quita el texto 'Comparecencia (DOC)' como pediste -->
+        <!-- Texto 'Comparecencia (DOC)' eliminado -->
         <div class="row center" style="margin:6px 0 8px 0">
           <button class="btn" id="integrarDoc">Integrar comparecencia</button>
         </div>
@@ -323,7 +329,7 @@ async function readFromClipboard(){
 }
 
 function parseByRules(ocrRaw){
-  // Normalización de detección: mayúsculas sin tildes + SIN ESPACIOS
+  // Normalización de detección: mayúsculas sin tildes + SIN ESPACIOS → única cadena NS
   const raw = ocrRaw || "";
   const lines = toLines(raw);
   const U = lines.map(normalize);
@@ -369,8 +375,8 @@ function parseByRules(ocrRaw){
     return (pos >= winStart && pos !== -1) ? pos : -1;
   })();
 
-  // DOMICILIO (una sola línea usando NS): desde "DOMICILIO" hasta el primer anclaje siguiente
-  let domicilio = "";
+  // DOMICILIO: desde "DOMICILIO" hasta provincia o anclaje siguiente
+  let domicilio = ""; let domicilioUncertain = true;
   {
     const s = NS;
     const key = 'DOMICILIO';
@@ -405,9 +411,10 @@ function parseByRules(ocrRaw){
           .replace(/(\d)([A-Za-zÁÉÍÓÚÜÑ])/g, '$1 $2')
           .replace(/\s{2,}/g,' ')
           .trim();
-        domicilio = streetRaw + ', ' + suf.canon; // calle con espaciado + municipio canónico
+        domicilio = streetRaw + ', ' + suf.canon;
+        domicilioUncertain = false;
       } else {
-        // sin municipio detectable: devolver el trozo original con espaciado mínimo
+        // sin municipio detectable: devolver el trozo original con espaciado mínimo (en duda)
         const rawStart = NS_MAP[start] ?? 0;
         const rawEnd = (NS_MAP[end-1] ?? NS_MAP[NS_MAP.length-1]) + 1;
         let streetRaw = raw.slice(rawStart, rawEnd)
@@ -420,8 +427,8 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // LUGAR DE NACIMIENTO (una sola línea): tras LUGARDENACIMIENTO/LAGARDENACIMIENTO hasta HIJO/ADE
-  let lugarNac = "";
+  // LUGAR DE NACIMIENTO: tras LUGARDENACIMIENTO/LAGARDENACIMIENTO hasta provincia o DE (padres)
+  let lugarNac = ""; let lugarUncertain = true;
   {
     const s = NS;
     const keys = ['LUGARDENACIMIENTO','LAGARDENACIMIENTO'];
@@ -443,10 +450,9 @@ function parseByRules(ocrRaw){
       const hardEnd = Math.min(anchorEnd, parentsLimit);
       const end = (pv && pv.index < hardEnd) ? pv.index : hardEnd;
 
-      // Segmento hasta provincia (si hay). Esto suele ser el MUNICIPIO (pegado en NS)
       let seg = s.slice(start, end);
 
-      // Corta números basura si se colaron
+      // corta números basura si se colaron
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
 
@@ -454,6 +460,9 @@ function parseByRules(ocrRaw){
       const munMatch = matchMunicipio(rawMunNS);   // intenta canonizar municipio
 
       if (pv){ // hay provincia detectada
+        // con provincia detectada bajamos incertidumbre
+        lugarUncertain = false;
+
         const provCanon = tcase(pv.canon);
         const munCanon = munMatch.found ? tcase(munMatch.canon) : tcase(rawMunNS);
 
@@ -465,10 +474,11 @@ function parseByRules(ocrRaw){
           lugarNac = `${munCanon}, ${provCanon}`;
         }
       } else {
-        // Sin provincia detectada: comportamiento previo
+        // Sin provincia detectada: comportamiento previo + mantiene incertidumbre salvo match exacto
         const rawLoc = rawMunNS;
         const mloc = matchMunicipio(rawLoc);
         lugarNac = mloc.found ? tcase(mloc.canon) : tcase(rawLoc);
+        if (!(mloc && mloc.found && !mloc.approx)) lugarUncertain = true;
       }
     }
   }
@@ -479,6 +489,7 @@ function parseByRules(ocrRaw){
     const s = NS;
     const stop = gStop; // hasta IDESP/IOESP/< o EQUIPO
     let start = -1;
+    let padresUncertain = true;
 
     // Regla base: usar el "DE" detectado justo antes del bloque MRZ/EQUIPO
     if (gParentsDE !== -1) start = gParentsDE + 2; // tras 'DE'
@@ -498,18 +509,14 @@ function parseByRules(ocrRaw){
       const cutNum = seg.search(/[0-9]/);
       if (cutNum !== -1) seg = seg.slice(0, cutNum);
 
-      // Pre-limpieza: convertir separadores en espacios virtuales
-      // Nota: en NS no hay espacios, así que insertamos espacios sintéticos en puntos probables
-      // 1) Sustituir grupos de '/' o '|' o '!' por espacios (por si alguna variante sobrevivió)
-      seg = seg.replace(/[\/_|!¡]+/g, ' ');
-      // 2) Insertar espacios alrededor de puntos y comas virtuales (no suelen estar en NS)
-      seg = seg.replace(/[,.;:]+/g, ' ');
+      // limpiar separadores “OCR”
+      seg = seg.replace(/[\/_|!¡]+/g, ' ').replace(/[,.;:]+/g, ' ');
 
       // Heurística clave: probar cortes en 'I' como separador (la '/' suele leerse como 'I')
       function pickTwoNamesFromCompact(compact){
         const clean = compact.replace(/\s+/g,'');
         let best = null;
-        // a) Primero, probar splits en posiciones donde hay 'I'
+        // a) Primero, splits en 'I'
         for (let j=1;j<clean.length-1;j++){
           if (clean[j] !== 'I') continue;
           const left = clean.slice(0,j);
@@ -520,14 +527,13 @@ function parseByRules(ocrRaw){
             break;
           }
         }
-        // b) Si no hubo éxito, probar todos los splits razonables (de 2..len-2)
+        // b) Si no hubo éxito, probar splits generales buscando dos nombres válidos
         if (!best){
           for (let i=2;i<=clean.length-2;i++){
             const left = clean.slice(0,i);
             const right = clean.slice(i);
             const a = isNombre(left);
             if (!(a && a.ok)) continue;
-            // intenta que todo el right sea un nombre; si no, busca el prefijo más largo que sea nombre
             let bestRight = null;
             for (let k=right.length; k>=2; k--){
               const cand = right.slice(0,k);
@@ -545,10 +551,25 @@ function parseByRules(ocrRaw){
 
       const pair = pickTwoNamesFromCompact(seg);
       if (pair){
+        padresUncertain = false; // separación clara por 'I' o split válido
         padres = `${tcase(pair[0])} y ${tcase(pair[1])}`;
       } else {
-        // Fallback: tokenizar por huecos sintéticos y escoger dos nombres válidos en secuencia
-        const tokens = seg.replace(/\s{2,}/g,' ').trim().split(/\s+/).filter(Boolean);
+        // Fallback mejorado: separar posibles compuestos pegados (p.ej. JOSELUIS)
+        const rawTokens = seg.replace(/\s{2,}/g,' ').trim().split(/\s+/).filter(Boolean);
+        function splitTwoNamesIfPossible(tok){
+          const t = tok.replace(/[^A-ZÁÉÍÓÚÜÑ]/g,'');
+          for (let i=2; i<=t.length-2; i++){
+            const a = t.slice(0,i), b = t.slice(i);
+            const ca = isNombre(a), cb = isNombre(b);
+            if (ca && ca.ok && cb && cb.ok) return [a,b];
+          }
+          return null;
+        }
+        const tokens = [];
+        for (const t of rawTokens){
+          const split = splitTwoNamesIfPossible(t);
+          if (split) tokens.push(...split); else tokens.push(t);
+        }
         let chosen = [];
         for (let i=0; i<tokens.length && chosen.length<2; i++){
           const w = tokens[i];
@@ -560,9 +581,9 @@ function parseByRules(ocrRaw){
     }
   }
 
-  // MRZ con separadores
+  // MRZ con separadores (método tradicional basado en “líneas” del raw)
   function detectMRZ(upperLines){
-    const isSeparator = (s)=> /^([<\s]){3,}$/.test((s||""));
+    const isSeparator = (s)=> /^([<\s0-9]){3,}$/.test((s||""));
     const clean = (s)=> (s||"").replace(/\s+/g,'').toUpperCase();
     const arr = upperLines.filter(s => s && s.trim() && !isSeparator(s));
 
@@ -587,7 +608,29 @@ function parseByRules(ocrRaw){
     while (last3Any.length < 3) last3Any.unshift("");
     return last3Any;
   }
-  const [MRZ_L1, MRZ_L2, MRZ_L3] = detectMRZ(U);
+
+  // Fallback MRZ L3 desde NS (una sola línea): ESP → segundo “<<<” → L3
+  function detectMRZ_L3_fromNS(ns){
+    if(!ns) return "";
+    const s = ns;
+    const idxESP = s.indexOf("ESP");
+    if (idxESP === -1) return "";
+    const g1 = s.indexOf("<<<", idxESP + 3);
+    if (g1 === -1) return "";
+    const g2 = s.indexOf("<<<", g1 + 3);
+    if (g2 === -1) return "";
+    let start = g2 + 3;
+    while (start < s.length && !/[A-ZÑ]/.test(s[start])) start++; // salta '0' u otros
+    return s.slice(start);
+  }
+
+  // Obtener MRZ (L1/L2 desde método tradicional; L3 desde NS si falta)
+  let [MRZ_L1, MRZ_L2, MRZ_L3] = detectMRZ(U);
+  let mrzL3FromNS = false;
+  if (!MRZ_L3 || MRZ_L3.length < 5){
+    const l3ns = detectMRZ_L3_fromNS(NS);
+    if (l3ns){ MRZ_L3 = l3ns; mrzL3FromNS = true; }
+  }
 
   // Nacionalidad
   function isSpainFromL1(l1){
@@ -650,6 +693,8 @@ function parseByRules(ocrRaw){
     apellidos = [ap1, ap2].filter(Boolean).join(" ").trim().toUpperCase();
     nombre = tcase([nom1, nom2].filter(Boolean).join(" ").trim());
   }
+  let nombreUncertain = mrzL3FromNS;   // si vino del fallback desde NS, marcar amarillo
+  let apellidosUncertain = mrzL3FromNS;
 
   // Tipo documento
   let tipo = "DNI";
@@ -686,6 +731,14 @@ function parseByRules(ocrRaw){
   let sexoFin         = stripEquipo(sexo);
   let numDocFin       = stripEquipo(numDoc || "");
 
+  const flags = {
+    Nombre: !!nombreUncertain,
+    Apellidos: !!apellidosUncertain,
+    Padres: !!padresUncertain,
+    Lugar: !!lugarUncertain,
+    Domicilio: !!domicilioUncertain
+  };
+
   return {
     Nombre: nombreFin,
     Apellidos: apellidosFin,
@@ -696,7 +749,8 @@ function parseByRules(ocrRaw){
     "Nombre de los Padres": padresFin,
     "Fecha de nacimiento": fechaNacFin,
     "Lugar de nacimiento": lugarNacFin,
-    Domicilio: domicilioFin
+    Domicilio: domicilioFin,
+    _flags: flags
   };
 }
 
@@ -766,6 +820,28 @@ function fillFormFromParsed(p){
   if(p["Fecha de nacimiento"]!=null) document.getElementById('Nacimiento').value = p["Fecha de nacimiento"];
   if(p["Lugar de nacimiento"]!=null) document.getElementById('Lugar').value = p["Lugar de nacimiento"];
   if(p.Domicilio!=null) document.getElementById('Domicilio').value = p.Domicilio;
+
+  // marcar dudas (amarillo) según flags
+  const idMap = {
+    Nombre: 'Nombre',
+    Apellidos: 'Apellidos',
+    Padres: 'Padres',
+    Lugar: 'Lugar',
+    Domicilio: 'Domicilio'
+  };
+  // limpiar marcas anteriores
+  for (const key in idMap){
+    const el = document.getElementById(idMap[key]);
+    if (el) el.classList.remove('uncertain');
+  }
+  if (p._flags){
+    if (p._flags.Nombre) document.getElementById('Nombre')?.classList.add('uncertain');
+    if (p._flags.Apellidos) document.getElementById('Apellidos')?.classList.add('uncertain');
+    if (p._flags.Padres) document.getElementById('Padres')?.classList.add('uncertain');
+    if (p._flags.Lugar) document.getElementById('Lugar')?.classList.add('uncertain');
+    if (p._flags.Domicilio) document.getElementById('Domicilio')?.classList.add('uncertain');
+  }
+
   validateAll();
 }
 // Limpia SOLO la UI (mantiene expediente)
@@ -773,7 +849,7 @@ function clearFormOnly(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
       const el=document.getElementById(id);
-      if (el) el.value="";
+      if (el){ el.value=""; el.classList.remove('uncertain'); }
     });
   const ta = document.getElementById('Doc');
   if (ta) ta.value = "";

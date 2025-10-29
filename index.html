@@ -17,8 +17,8 @@
       color:var(--fg);
       /* Fondo con imagen */
       background:
-        linear-gradient(180deg, rgba(11,18,32,.60), rgba(11,18,32,.60)),
-        url('aq.png') center / cover no-repeat fixed;
+        linear-gradient(180deg, rgba(11,18,32,.45), rgba(11,18,32,.45)),
+        url('./aq.png') center / cover no-repeat fixed;
       min-height:100dvh;
     }
     h1{
@@ -49,6 +49,13 @@
     .row.center{justify-content:center}                   /* centrado de botones */
     .btn{border:1px solid var(--accent);color:var(--fg);background:rgba(77,163,255,.15);padding:10px 14px;border-radius:12px;cursor:pointer}
     .btn.secondary{border-color:var(--border);background:rgba(255,255,255,.05)}
+    /* Comparecencia GPT en morado */
+    #gptComparecencia{
+      border-color:#8a4dff !important;
+      background:rgba(138,77,255,.12);
+    }
+    #gptComparecencia:hover{ box-shadow:0 6px 18px rgba(138,77,255,.25) }
+    #gptComparecencia:focus{ outline:2px solid rgba(138,77,255,.45); outline-offset:2px }
     /* Broom button accent (orange) */
     #clearForm{
       border-color:#ff8c1a !important;
@@ -85,7 +92,7 @@
   <!-- ACCIONES -->
   <div class="card">
     <div class="row center">
-      <button class="btn" id="readAnalyze">Integrar filiación</button>
+      <button class="btn" id="readAnalyze">Integrar DNI</button>
       <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT</button>
       <button class="btn secondary broom" id="clearForm" title="Limpiar formulario">🧹</button>
     </div>

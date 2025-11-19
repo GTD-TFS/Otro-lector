@@ -96,13 +96,24 @@ h1::after{
     }
     #gptComparecencia:hover{ box-shadow:0 6px 18px rgba(138,77,255,.25) }
     #gptComparecencia:focus{ outline:2px solid rgba(138,77,255,.45); outline-offset:2px }
-    /* Broom button accent (orange) */
-    #clearForm{
+    /* Botones naranja: broom + agregar filiación */
+    #clearForm,
+    #addFiliacion{
       border-color:#ff8c1a !important;
       background:rgba(255,140,26,.08);
     }
-    #clearForm:hover{ box-shadow:0 0 0 3px rgba(255,140,26,.18) inset; }
-    #clearForm:focus{ outline:2px solid rgba(255,140,26,.5); outline-offset:2px; }
+    #clearForm:hover,
+    #addFiliacion:hover{ box-shadow:0 0 0 3px rgba(255,140,26,.18) inset; }
+    #clearForm:focus,
+    #addFiliacion:focus{ outline:2px solid rgba(255,140,26,.5); outline-offset:2px; }
+
+    /* Botón cargar cifrado (verde) */
+    #loadEncrypted{
+      border-color:var(--green) !important;
+      background:rgba(34,197,123,.10);
+    }
+    #loadEncrypted:hover{ box-shadow:0 6px 18px rgba(34,197,123,.25); }
+    #loadEncrypted:focus{ outline:2px solid rgba(34,197,123,.5); outline-offset:2px; }
     .fields{display:grid;gap:12px;grid-template-columns:1fr}
     @media(min-width:760px){.fields{grid-template-columns:1fr 1fr}}
     label{font-size:12px;margin-bottom:4px;color:#cfe0ff;display:block}
@@ -184,7 +195,9 @@ h1::after{
       <div class="span2"></div>
       <div class="span2 row center" style="margin-top:6px">
         <button class="btn" id="addFiliacion">Agregar filiación al expediente</button>
-        <button class="btn" id="download">Descargar proyecto</button>
+        <button class="btn" id="download">Descargar cifrado</button>
+        <button class="btn secondary" id="loadEncrypted">Cargar cifrado</button>
+        <input type="file" id="encryptedInput" accept=".enc,.txt,.json" style="display:none">
       </div>
     </div>
   </div>
@@ -196,6 +209,87 @@ h1::after{
 // ======================================================
 
 const expediente = { doc: "", filiaciones: [] };
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function toBase64(arr){
+  let str = "";
+  for(let i=0;i<arr.length;i++) str += String.fromCharCode(arr[i]);
+  return btoa(str);
+}
+
+function fromBase64(str){
+  const bin = atob(str);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for(let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function deriveKey(password, salt){
+  const pwKey = await crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 200000,
+      hash: "SHA-256",
+    },
+    pwKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt","decrypt"]
+  );
+}
+
+async function encryptJSON(obj, password){
+  const jsonStr = JSON.stringify(obj);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await deriveKey(password, salt);
+
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    textEncoder.encode(jsonStr)
+  );
+
+  const cipherBytes = new Uint8Array(cipherBuf);
+  const full = new Uint8Array(salt.length + iv.length + cipherBytes.length);
+  full.set(salt, 0);
+  full.set(iv, salt.length);
+  full.set(cipherBytes, salt.length + iv.length);
+
+  return toBase64(full);
+}
+
+async function decryptJSON(cipherBase64, password){
+  const full = fromBase64((cipherBase64 || "").trim());
+  if (full.length < 16 + 12 + 1) throw new Error("Datos insuficientes");
+
+  const salt = full.slice(0, 16);
+  const iv   = full.slice(16, 28);
+  const data = full.slice(28);
+
+  const key = await deriveKey(password, salt);
+
+  const plainBuf = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    data
+  );
+
+  const jsonStr = textDecoder.decode(plainBuf);
+  return JSON.parse(jsonStr);
+}
 
 // ---------- Helpers texto ----------
 const tcase = s => (s||"").toLowerCase().replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])/g,c=>c.toUpperCase());
@@ -944,7 +1038,7 @@ document.getElementById('addFiliacion').addEventListener('click', ()=>{
 });
 document.getElementById('clearForm').addEventListener('click', clearFormOnly);
 document.getElementById('Doc').addEventListener('input', (e)=>{ expediente.doc = e.target.value; });
-document.getElementById('download').addEventListener('click', ()=>{
+document.getElementById('download').addEventListener('click', async ()=>{
   expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
   if (expediente.filiaciones.length === 0){
     const f = getFormAsFiliacion();
@@ -952,12 +1046,79 @@ document.getElementById('download').addEventListener('click', ()=>{
     if (anyVal) expediente.filiaciones.push(f);
   }
   const data = { doc: expediente.doc, filiaciones: expediente.filiaciones };
-  const d = new Date(); const pad = n => String(n).padStart(2,'0');
-  const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())} ${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.json`;
-  const a=document.createElement('a');
-  a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
-  a.download=fname; a.click();
+
+  const password = prompt("Introduce una frase de paso para cifrar el expediente (mínimo 8 caracteres):");
+  if (!password) return;
+  if (password.length < 8){
+    alert("Frase de paso demasiado corta. Usa al menos 8 caracteres.");
+    return;
+  }
+
+  try{
+    const cipherBase64 = await encryptJSON(data, password);
+    const blob = new Blob([cipherBase64], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const d = new Date(); const pad = n => String(n).padStart(2,'0');
+    const fname = `Proyecto ${pad(d.getHours())}-${pad(d.getMinutes())} ${pad(d.getDate())}_${pad(d.getMonth()+1)}_${d.getFullYear()}.enc`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    a.click();
+    URL.revokeObjectURL(url);
+  }catch(err){
+    console.error("Error cifrando el expediente:", err);
+    alert("No se ha podido cifrar el expediente.");
+  }
 });
+
+const btnLoadEnc = document.getElementById('loadEncrypted');
+const inputEnc   = document.getElementById('encryptedInput');
+
+if (btnLoadEnc && inputEnc){
+  btnLoadEnc.addEventListener('click', () => {
+    inputEnc.value = "";
+    inputEnc.click();
+  });
+
+  inputEnc.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const text = (ev.target.result || "").toString().trim();
+      if (!text){
+        alert("Archivo vacío o no válido.");
+        return;
+      }
+      const password = prompt("Introduce la frase de paso para descifrar el expediente:");
+      if (!password) return;
+      try{
+        const data = await decryptJSON(text, password);
+        if (!data || typeof data !== "object"){
+          throw new Error("Formato inesperado");
+        }
+        expediente.doc = data.doc || "";
+        expediente.filiaciones = Array.isArray(data.filiaciones) ? data.filiaciones : [];
+
+        // Limpiar campos del formulario (excepto DOC)
+        ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
+          .forEach(id => {
+            const el = document.getElementById(id);
+            if (el){ el.value = ""; el.classList.remove("uncertain","valid","invalid"); }
+          });
+        const docEl = document.getElementById('Doc');
+        if (docEl) docEl.value = expediente.doc;
+        updateCount();
+        validateAll();
+        alert("Proyecto cifrado cargado correctamente.");
+      }catch(err){
+        console.error("Error al descifrar el expediente:", err);
+        alert("No se ha podido descifrar el expediente. Clave incorrecta o archivo dañado.");
+      }
+    };
+    reader.readAsText(file);
+  });
+}
 
 // init
 updateCount(); validateAll(); initMunicipios(); initNombres();

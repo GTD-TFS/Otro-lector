@@ -4,6 +4,10 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>FILIATRON</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0b1220">
+
   <style>
       :root{
       --bg:#0b1220; --fg:#e6eefc; --accent:#0979f1;
@@ -1122,6 +1126,14 @@ if (btnLoadEnc && inputEnc){
 
 // init
 updateCount(); validateAll(); initMunicipios(); initNombres();
+</script>
+  <script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .catch(err => console.error('SW error', err));
+  });
+}
 </script>
 </body>
 </html>

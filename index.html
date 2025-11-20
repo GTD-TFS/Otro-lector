@@ -135,7 +135,32 @@ h1::after{
     .btn:focus{ outline:2px solid rgba(77,163,255,.45); outline-offset:2px }
     .grow{flex:1}
     ul.list{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
-    ul.list li{border:1px solid var(--border);border-radius:10px;padding:6px 10px;background:rgba(255,255,255,.06);font-size:12px}
+    ul.list li{
+      position:relative;
+      border-radius:10px;
+      padding:6px 10px;
+      background:rgba(10,16,28,.75);
+      font-size:12px;
+      border:1px solid transparent; /* el borde visible lo hace el pseudo */
+      overflow:hidden;
+    }
+    ul.list li::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      padding:1px;
+      border-radius:inherit;
+      background:linear-gradient(135deg,#22c55e,#facc15); /* verde → amarillo */
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;
+      mask-composite:exclude;
+      pointer-events:none;
+    }
     ul.list li button{margin-left:8px}
 
     /* Campo con duda (modo B, borde amarillo) */
@@ -153,8 +178,8 @@ h1::after{
   <!-- ACCIONES -->
   <div class="card">
     <div class="row center">
-      <button class="btn" id="readAnalyze">Integrar DNI</button>
-      <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT</button>
+      <button class="btn" id="readAnalyze">Integrar DNI 🪪</button>
+      <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT 🕹️</button>
       <button class="btn secondary broom" id="clearForm" title="Limpiar formulario">🧹</button>
     </div>
 
@@ -170,7 +195,7 @@ h1::after{
       <div class="span2">
         <!-- Texto 'Comparecencia (DOC)' eliminado -->
         <div class="row center" style="margin:6px 0 8px 0">
-          <button class="btn" id="integrarDoc">Integrar comparecencia</button>
+          <button class="btn" id="integrarDoc">Integrar comparecencia 📋</button>
         </div>
         <textarea id="Doc"></textarea>
       </div>
@@ -198,9 +223,9 @@ h1::after{
 
       <div class="span2"></div>
       <div class="span2 row center" style="margin-top:6px">
-        <button class="btn" id="addFiliacion">Agregar filiación al expediente</button>
-        <button class="btn" id="download">Descargar cifrado</button>
-        <button class="btn secondary" id="loadEncrypted">Cargar cifrado</button>
+        <button class="btn" id="addFiliacion">👤 Agregar filiación al expediente</button>
+        <button class="btn" id="download">⬇️ Descargar cifrado 🔐 </button>
+        <button class="btn secondary" id="loadEncrypted">⬆️ Cargar cifrado 🔐 </button>
         <input type="file" id="encryptedInput" accept=".enc,.txt,.json" style="display:none">
       </div>
     </div>
@@ -1043,12 +1068,18 @@ document.getElementById('addFiliacion').addEventListener('click', ()=>{
 document.getElementById('clearForm').addEventListener('click', clearFormOnly);
 document.getElementById('Doc').addEventListener('input', (e)=>{ expediente.doc = e.target.value; });
 document.getElementById('download').addEventListener('click', async ()=>{
-  expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
-  if (expediente.filiaciones.length === 0){
-    const f = getFormAsFiliacion();
-    const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
-    if (anyVal) expediente.filiaciones.push(f);
+  // Si hay datos en la ficha actual, obligamos a agregarlos o limpiarlos
+  const f = getFormAsFiliacion();
+  const anyVal = Object.values(f).some(v => (v||"").trim()!=="");
+  if (anyVal){
+    alert(
+      "Tienes datos en la ficha de filiación que no has agregado al expediente.\n\n" +
+      "Pulsa 'Agregar filiación' o limpia la ficha antes de descargar."
+    );
+    return;
   }
+
+  expediente.doc = document.getElementById('Doc').value || expediente.doc || "";
   const data = { doc: expediente.doc, filiaciones: expediente.filiaciones };
 
   const password = prompt("Introduce una frase de paso para cifrar el expediente (mínimo 8 caracteres):");

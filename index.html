@@ -178,8 +178,7 @@ h1::after{
   <!-- ACCIONES -->
   <div class="card">
     <div class="row center">
-      <button class="btn" id="readAnalyze">Integrar DNI 🪪</button>
-      <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT 🕹️</button>
+      <button class="btn" id="gptComparecencia" title="Abrir Comparecencia GPT">Comparecencia GPT 🤖</button>
       <button class="btn secondary broom" id="clearForm" title="Limpiar formulario">🧹</button>
     </div>
 
@@ -195,9 +194,12 @@ h1::after{
       <div class="span2">
         <!-- Texto 'Comparecencia (DOC)' eliminado -->
         <div class="row center" style="margin:6px 0 8px 0">
-          <button class="btn" id="integrarDoc">Integrar comparecencia 📋</button>
+          <button class="btn" id="integrarDoc">Pegar comparecencia 📋</button>
         </div>
         <textarea id="Doc"></textarea>
+        <div class="row center" style="margin:8px 0 6px 0">
+          <button class="btn" id="readAnalyze">Integrar DNI 🪪</button>
+        </div>
       </div>
 
       <!-- Ficha de filiación actual -->
@@ -932,13 +934,29 @@ function parseByRules(ocrRaw){
 }
 
 // ---------- UI ----------
+function validateField(el){
+  if (!el) return;
+  const value = (el.value || "").trim();
+  let ok = false;
+
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA"){
+    // mínimo 2 caracteres para considerarlo "bien" (borde verde)
+    ok = value.length >= 2;
+  } else if (el.tagName === "SELECT"){
+    // selects: basta con que tenga algo elegido
+    ok = value !== "";
+  }
+
+  el.classList.toggle("valid", ok);
+  el.classList.toggle("invalid", !ok);
+}
+
 function validateAll(){
   ["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"]
     .forEach(id=>{
-      const el=document.getElementById(id);
-      const ok=!!(el.value&&el.value.trim());
-      el.classList.toggle("valid",ok);
-      el.classList.toggle("invalid",!ok);
+      const el = document.getElementById(id);
+      if (!el) return;
+      validateField(el);
     });
 }
 function updateCount(){
@@ -1156,7 +1174,21 @@ if (btnLoadEnc && inputEnc){
 }
 
 // init
-updateCount(); validateAll(); initMunicipios(); initNombres();
+["Nombre","Apellidos","Tipo","Numero","Sexo","Nacionalidad","Padres","Nacimiento","Lugar","Domicilio","Telefono","Condicion"].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // Validar al salir del campo
+  el.addEventListener("blur", () => validateField(el));
+  // En selects, también al cambiar la opción
+  if (el.tagName === "SELECT"){
+    el.addEventListener("change", () => validateField(el));
+  }
+});
+
+updateCount();
+validateAll();
+initMunicipios();
+initNombres();
 </script>
   <script>
 if ('serviceWorker' in navigator) {

@@ -1,6 +1,6 @@
 // FILIATRON — Service Worker básico para PWA OFFLINE
 
-const CACHE_NAME = "filiatron-cache-v1";
+const CACHE_NAME = 'filiatron-v2';
 
 // Archivos que se cachean en la instalación
 const FILES = [

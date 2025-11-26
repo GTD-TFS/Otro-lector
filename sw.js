@@ -6,7 +6,7 @@ const CACHE_NAME = 'filiatron-v4';
 const FILES = [
   "./",
   "./index.html",
-  "./aq.png",
+  "./verdde.jpg",
   "./municipios.json",
   "./nombres.json"
 ];
